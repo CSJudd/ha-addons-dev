@@ -7,9 +7,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# -----------------------------
-# Configuration / Constants
-# -----------------------------
 ADDON_OPTIONS_PATH = Path("/data/options.json")
 LOG_FILE = Path("/config/esphome_smart_update.log")
 PROGRESS_FILE = Path("/config/esphome_update_progress.json")
@@ -21,12 +18,6 @@ DEFAULTS = {
     "esphome_container": "addon_15ef4d2f_esphome"
 }
 
-# Respect HA Supervisor socket layout
-DOCKER_HOST = os.environ.get("DOCKER_HOST", "unix:///run/docker.sock")
-
-# -----------------------------
-# Helpers
-# -----------------------------
 def ts() -> str:
     return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 
@@ -37,7 +28,6 @@ def log(msg: str):
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
-        # never break on logging
         pass
 
 def load_options():
@@ -45,7 +35,9 @@ def load_options():
     if ADDON_OPTIONS_PATH.exists():
         with ADDON_OPTIONS_PATH.open("r", encoding="utf-8") as f:
             loaded = json.load(f)
-            opts.update({k: loaded.get(k, v) for k, v in DEFAULTS.items()})
+            for k in DEFAULTS:
+                if k in loaded:
+                    opts[k] = loaded[k]
     return opts
 
 def load_progress():
@@ -65,7 +57,6 @@ def save_progress(data: dict):
         log(f"Warning: failed to write progress file: {e}")
 
 def ping_host(host: str, count: int = 1, timeout: int = 1) -> bool:
-    # Alpine busybox ping uses slightly different flags; iputils is installed.
     try:
         res = subprocess.run(
             ["ping", "-c", str(count), "-W", str(timeout), host],
@@ -75,119 +66,80 @@ def ping_host(host: str, count: int = 1, timeout: int = 1) -> bool:
         )
         return res.returncode == 0
     except FileNotFoundError:
-        # Fallback: assume reachable to avoid false negatives if ping vanished
         return True
 
-def docker_exec(container: str, cmd: list[str]) -> int:
+def _resolve_docker_host() -> str:
+    dh = os.environ.get("DOCKER_HOST", "").strip()
+    if dh:
+        return dh
+    for path in ("/run/docker.sock", "/var/run/docker.sock"):
+        if os.path.exists(path):
+            return f"unix://{path}"
+    return "unix:///var/run/docker.sock"  # last resort default
+
+def _docker_env():
     env = os.environ.copy()
-    env["DOCKER_HOST"] = DOCKER_HOST
-    full_cmd = ["docker", "exec", container] + cmd
-    proc = subprocess.run(full_cmd, env=env)
+    env["DOCKER_HOST"] = _resolve_docker_host()
+    return env
+
+def docker_exec(container: str, cmd: list[str]) -> int:
+    proc = subprocess.run(["docker", "exec", container] + cmd, env=_docker_env())
     return proc.returncode
 
 def docker_cp(container: str, src: str, dst: str) -> int:
-    env = os.environ.copy()
-    env["DOCKER_HOST"] = DOCKER_HOST
-    full_cmd = ["docker", "cp", f"{container}:{src}", dst]
-    proc = subprocess.run(full_cmd, env=env)
+    proc = subprocess.run(["docker", "cp", f"{container}:{src}", dst], env=_docker_env())
     return proc.returncode
 
 def ensure_paths():
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-# -----------------------------
-# Device Discovery & Versioning
-# -----------------------------
 def discover_devices_via_esphome_dashboard() -> list[dict]:
-    """
-    Basic discovery strategy:
-    - Parse /config/esphome/*.yaml filenames as device configs
-    - Derive names and IPs from filename & convention you use
-    - If you have a JSON inventory, prefer that here.
-
-    This keeps the example self-contained while matching your logs.
-    """
     esphome_dir = Path("/config/esphome")
     devices = []
     for y in sorted(esphome_dir.glob("*.yaml")):
-        name = y.stem
-        # Your environment seems to map names to addresses by convention;
-        # if you have a registry, plug it in here.
         devices.append({
-            "name": name,
-            "config": str(y.name),
-            "address": None  # filled by your own mapping if desired
+            "name": y.stem,
+            "config": y.name,
+            "address": None
         })
     return devices
 
 def read_versions_from_esphome(container: str, yaml_name: str) -> tuple[str, str]:
-    """
-    Use esphome CLI inside the ESPHome add-on container to read:
-    - deployed_version (from device via API or stored meta)
-    - current_version (from compile context / platform_version)
-    For clarity, we’ll ask esphome to output the version string it plans to use.
-    """
-    # Ask esphome to show config; parse "esphome->name" + "esphome->platformio_options->platform_packages"
-    # For brevity, we’ll shell out and grep. You can refine this to JSON if you maintain a helper.
-    cmd = ["esphome", f"/config/esphome/{yaml_name}", "config"]
-    rc = docker_exec(container, cmd)
-    # We’re not failing the run on inability to read; just return placeholders.
-    current = "unknown"
+    # Placeholder: wire to your real version probe if desired
+    rc = docker_exec(container, ["esphome", f"/config/esphome/{yaml_name}", "config"])
     deployed = "unknown"
+    current = "unknown"
     return deployed, current
 
-# -----------------------------
-# Compile & OTA
-# -----------------------------
 def compile_firmware(container: str, yaml_name: str, device_name: str) -> str | None:
     log(f"→ Compiling {yaml_name} in container")
     rc = docker_exec(container, ["esphome", f"/config/esphome/{yaml_name}", "compile"])
     if rc != 0:
         log(f"✗ Compilation failed for {device_name}")
         return None
-    # Default ESPHome build output path
     build_dir = f"/config/esphome/.esphome/build/{Path(yaml_name).stem}/"
     bin_name = f"{Path(yaml_name).stem}.bin"
     src_path = build_dir + bin_name
-    dst_path = f"/config/esphome/builds/{bin_name}"
-
-    # Ensure destination dir exists on host
-    Path("/config/esphome/builds").mkdir(parents=True, exist_ok=True)
-
+    dst_dir = "/config/esphome/builds"
+    Path(dst_dir).mkdir(parents=True, exist_ok=True)
+    dst_path = f"{dst_dir}/{bin_name}"
     if docker_cp(container, src_path, dst_path) != 0:
         log(f"✗ Could not copy binary for {device_name}")
         return None
-
     log(f"→ Binary copied to {dst_path}")
     return dst_path
 
 def ota_upload(bin_path: str, address: str, ota_password: str) -> bool:
-    # Use esphome's simple_http_ota API by calling esphome "upload" inside the ESPHome container.
-    # That guarantees consistent protocol handling.
-    # We’ll run: esphome /config/esphome/<yaml> upload --device <ip>
-    # Since we only have the bin, use curl uploader in Python? Simpler: call ESPHome again to upload.
-    # To avoid recompile, we’ll use the HTTP OTA helper in Python via esphome/ota; but
-    # to keep dependencies minimal, we’ll shell to ESPHome CLI with --device.
-    # Here, we call the upload **from our container** by exec’ing ESPHome container again.
-    # We need to map bin->upload path: easiest path is using "upload --device" with same YAML, not raw bin.
-    # To support raw bin OTA, we could invoke the OTA endpoint directly; but many devices require auth.
-    # Instead we’ll return True and rely on upload via YAML flow above. If you prefer raw .bin, expand here.
-
-    # Placeholder: raw HTTP OTA using curl:
     try:
         import requests
         url = f"http://{address}/ota"
         with open(bin_path, "rb") as f:
             r = requests.post(url, params={"password": ota_password}, data=f, timeout=300)
-        ok = (200 <= r.status_code < 300)
-        return ok
+        return 200 <= r.status_code < 300
     except Exception as e:
         log(f"OTA error: {e}")
         return False
 
-# -----------------------------
-# Main
-# -----------------------------
 def main():
     ensure_paths()
     opts = load_options()
@@ -198,26 +150,23 @@ def main():
     delay = int(opts["delay_between_updates"])
     ota_password = str(opts["ota_password"])
 
-    log("===============================================================================")
+    log("=" * 79)
     log("ESPHome Smart Updater Add-on")
-    log("===============================================================================")
+    log("=" * 79)
 
-    # Quick connectivity check to Docker socket
+    # Quick docker check (respects dynamic DOCKER_HOST)
     try:
-        # This hits the client; if socket/env is wrong you'll see the same error you reported.
-        subprocess.check_call(["docker", "ps"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call(["docker", "ps"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_docker_env())
     except Exception as e:
-        log("Error: Cannot connect to the Docker daemon via client.")
+        log("Error: Cannot connect to Docker via client.")
         log(f"Detail: {e}")
-        log("Hint: 'docker_api': true must be set, and DOCKER_HOST=unix:///run/docker.sock.")
+        log("Hint: Supervisor must mount a socket; ensure 'docker_api': true.")
         sys.exit(1)
 
-    # Discover devices (simple strategy; plug in your inventory if you have one)
     devices = discover_devices_via_esphome_dashboard()
     total = len(devices)
     log(f"Found {total} total devices to consider")
 
-    # Ensure progress structure
     progress.setdefault("done", [])
     progress.setdefault("failed", [])
     progress.setdefault("skipped", [])
@@ -239,20 +188,17 @@ def main():
         deployed, current = read_versions_from_esphome(esphome_container, yaml_name)
         log(f"Deployed: {deployed} | Current: {current}")
 
-        # Decide update (here we assume update is needed unless you wire proper version read)
-        needs_update = True
+        needs_update = True  # plug in your real decision logic
         if not needs_update:
             progress["skipped"].append(name)
             save_progress(progress)
             continue
 
-        # Optional ping
-        if skip_offline and address:
-            if not ping_host(address):
-                log(f"Device offline; skipping: {name}")
-                progress["skipped"].append(name)
-                save_progress(progress)
-                continue
+        if skip_offline and address and not ping_host(address):
+            log(f"Device offline; skipping: {name}")
+            progress["skipped"].append(name)
+            save_progress(progress)
+            continue
 
         log(f"Starting update for {name}")
         bin_path = compile_firmware(esphome_container, yaml_name, name)
