@@ -59,3 +59,15 @@ Fixed
 - Replace unavailable Alpine package `python3-venv` with `py3-virtualenv` and `py3-pip`.
 - Venv creation now uses `python3 -m virtualenv /data/venv`, ensuring pip is available inside venv.
 - Keeps docker-exec path optional; builtin compiler is default and resilient.
+
+# ---------------------------------------------------------------------------------------------
+## [1.1.1] - 2025-10-26
+Fixed
+- Corrected ESPHome CLI invocation order (`esphome compile <file>`) which previously caused
+  "invalid choice" errors during built-in compilation.
+- Implemented full graceful stop handling:
+  - Add-on now traps SIGTERM/SIGINT events from Home Assistant.
+  - Any running compile subprocess is terminated cleanly.
+  - Progress is saved immediately, preventing restarts from repeating completed devices.
+  - Prevents the add-on from continuing updates after being stopped.
+- Maintains all prior functionality and resume logic for both Docker and built-in compile modes.

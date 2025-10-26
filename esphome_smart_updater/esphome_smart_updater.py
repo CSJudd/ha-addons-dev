@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -20,6 +21,25 @@ DEFAULTS = {
     "esphome_container": "addon_15ef4d2f_esphome",
 }
 
+# ---- graceful stop support ----
+STOP_REQUESTED = False
+CURRENT_CHILD: Optional[subprocess.Popen] = None
+
+def _sig_handler(signum, frame):
+    # mark stop and terminate any active child
+    global STOP_REQUESTED, CURRENT_CHILD
+    STOP_REQUESTED = True
+    if CURRENT_CHILD and CURRENT_CHILD.poll() is None:
+        try:
+            CURRENT_CHILD.terminate()
+        except Exception:
+            pass
+
+# register signal handlers for HA stop
+signal.signal(signal.SIGTERM, _sig_handler)
+signal.signal(signal.SIGINT, _sig_handler)
+
+# ---- utilities ----
 def ts() -> str:
     return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 
@@ -76,6 +96,7 @@ def ping_host(host: str, count: int = 1, timeout: int = 1) -> bool:
     except FileNotFoundError:
         return True
 
+# ---- discovery / version placeholders (can be swapped for your inventory) ----
 def discover_devices() -> List[dict]:
     esphome_dir = Path("/config/esphome")
     devices = []
@@ -86,17 +107,35 @@ def discover_devices() -> List[dict]:
 def read_versions(_, __) -> Tuple[str, str]:
     return ("unknown", "unknown")
 
+# ---- subprocess helpers with termination support ----
+def _run(cmd: list[str], env: Optional[dict] = None) -> int:
+    """Run a command with global child tracking so SIGTERM can kill it."""
+    global CURRENT_CHILD
+    if STOP_REQUESTED:
+        return 143  # SIGTERM-like
+    try:
+        CURRENT_CHILD = subprocess.Popen(cmd, env=env)
+        rc = CURRENT_CHILD.wait()
+        return rc
+    finally:
+        CURRENT_CHILD = None
+
+# ---- compile/upload backends ----
 def _docker_env():
     return os.environ.copy()
 
 def compile_via_docker(container: str, yaml_name: str, device_name: str) -> Optional[str]:
+    # CORRECT CLI: esphome compile /config/esphome/<yaml>
     log(f"→ [docker] Compiling {yaml_name} in {container}")
-    rc = subprocess.run(
-        ["docker", "exec", container, "esphome", f"/config/esphome/{yaml_name}", "compile"],
+    rc = _run(
+        ["docker", "exec", container, "esphome", "compile", f"/config/esphome/{yaml_name}"],
         env=_docker_env()
-    ).returncode
-    if rc != 0:
-        log(f"✗ Compilation failed for {device_name}")
+    )
+    if rc != 0 or STOP_REQUESTED:
+        if STOP_REQUESTED:
+            log("Stop requested; aborting compile.")
+        else:
+            log(f"✗ Compilation failed for {device_name}")
         return None
 
     build_dir = f"/config/esphome/.esphome/build/{Path(yaml_name).stem}/"
@@ -106,7 +145,7 @@ def compile_via_docker(container: str, yaml_name: str, device_name: str) -> Opti
     Path(dst_dir).mkdir(parents=True, exist_ok=True)
     dst_path = f"{dst_dir}/{bin_name}"
 
-    rc = subprocess.run(["docker", "cp", f"{container}:{src_path}", dst_path], env=_docker_env()).returncode
+    rc = _run(["docker", "cp", f"{container}:{src_path}", dst_path], env=_docker_env())
     if rc != 0:
         log(f"✗ Could not copy binary for {device_name}")
         return None
@@ -120,12 +159,14 @@ def compile_via_builtin(yaml_name: str, device_name: str) -> Optional[str]:
         log("✗ Built-in esphome binary not found (ESPHOME_BIN).")
         return None
 
+    # CORRECT CLI: esphome compile /config/esphome/<yaml>
     log(f"→ [builtin] Compiling {yaml_name} using {esphome_bin}")
-    rc = subprocess.run(
-        [esphome_bin, f"/config/esphome/{yaml_name}", "compile"]
-    ).returncode
-    if rc != 0:
-        log(f"✗ Compilation failed for {device_name}")
+    rc = _run([esphome_bin, "compile", f"/config/esphome/{yaml_name}"])
+    if rc != 0 or STOP_REQUESTED:
+        if STOP_REQUESTED:
+            log("Stop requested; aborting compile.")
+        else:
+            log(f"✗ Compilation failed for {device_name}")
         return None
 
     build_dir = f"/config/esphome/.esphome/build/{Path(yaml_name).stem}/"
@@ -156,6 +197,7 @@ def ota_upload(bin_path: str, address: str, ota_password: str) -> bool:
         log(f"OTA error: {e}")
         return False
 
+# ---- main runner ----
 def main():
     ensure_paths()
     opts = load_options()
@@ -182,6 +224,10 @@ def main():
     ota_password = str(opts["ota_password"])
 
     for idx, dev in enumerate(devices, start=1):
+        if STOP_REQUESTED:
+            log("Stop requested; saving progress and exiting.")
+            break
+
         name = dev["name"]
         yaml_name = dev["config"]
         addr = dev["address"]
@@ -198,7 +244,8 @@ def main():
         deployed, current = read_versions(esphome_container, yaml_name)
         log(f"Deployed: {deployed} | Current: {current}")
 
-        needs_update = True  # plug in your actual version logic here
+        # Decision stub (replace with your real check)
+        needs_update = True
         if not needs_update:
             progress["skipped"].append(name)
             save_progress(progress)
@@ -215,6 +262,10 @@ def main():
             bin_path = compile_via_docker(esphome_container, yaml_name, name)
         else:
             bin_path = compile_via_builtin(yaml_name, name)
+
+        if STOP_REQUESTED:
+            log("Stop requested during compile; saving progress and exiting.")
+            break
 
         if not bin_path:
             progress["failed"].append(name)
@@ -235,14 +286,25 @@ def main():
             progress["failed"].append(name)
 
         save_progress(progress)
-        time.sleep(max(0, delay))
 
+        # Delay between devices, but allow fast stop
+        for _ in range(max(0, delay)):
+            if STOP_REQUESTED:
+                break
+            time.sleep(1)
+        if STOP_REQUESTED:
+            log("Stop requested after delay; saving progress and exiting.")
+            break
+
+    # final summary
     log("")
     log("Summary:")
     log(f"  Done:   {len(progress['done'])}")
     log(f"  Failed: {len(progress['failed'])}")
     log(f"  Skipped:{len(progress['skipped'])}")
     log("All done.")
+
+    save_progress(progress)
 
 if __name__ == "__main__":
     main()
