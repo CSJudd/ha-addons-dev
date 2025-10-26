@@ -19,7 +19,7 @@ Automatically update all ESPHome devices intelligently with resume capability fo
 2. Select **Repositories**
 3. Add this repository URL (or your local path):
    ```
-   /addon
+   https://github.com/CSJudd/ha-addons-dev.git
    ```
 4. Click **Add** then **Close**
 

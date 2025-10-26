@@ -1,26 +1,22 @@
 #!/usr/bin/with-contenv bashio
+set -euo pipefail
 
-bashio::log.info "Starting ESPHome Smart Updater..."
+bashio::log.info "ESPHome Smart Updater starting..."
 
-# Log configuration
-OTA_PASSWORD=$(bashio::config 'ota_password')
-SKIP_OFFLINE=$(bashio::config 'skip_offline')
-DELAY=$(bashio::config 'delay_between_updates')
-
-bashio::log.info "Configuration loaded:"
-bashio::log.info "  - OTA Password: ${OTA_PASSWORD:0:8}..."
-bashio::log.info "  - Skip Offline: $SKIP_OFFLINE"
-bashio::log.info "  - Delay Between Updates: ${DELAY}s"
-
-# Execute the Python script
-python3 /app/esphome_smart_updater.py
-
-EXIT_CODE=$?
-
-if [ $EXIT_CODE -eq 0 ]; then
-    bashio::log.info "Update process completed successfully"
-else
-    bashio::log.error "Update process failed with exit code $EXIT_CODE"
+# Confirm Docker API access was granted and socket is mounted
+if [ ! -S "/run/docker.sock" ]; then
+  bashio::log.fatal "Docker socket '/run/docker.sock' not found. In the add-on config, 'docker_api' must be true."
+  exit 1
 fi
 
-exit $EXIT_CODE
+# Ensure DOCKER_HOST is correct (Supervisor uses /run/docker.sock)
+export DOCKER_HOST="${DOCKER_HOST:-unix:///run/docker.sock}"
+
+# Basic sanity: docker client present?
+if ! command -v docker >/dev/null 2>&1; then
+  bashio::log.fatal "Docker client not found. Image must include docker-cli."
+  exit 1
+fi
+
+# Let the Python handle all logic
+exec python3 /app/esphome_smart_updater.py

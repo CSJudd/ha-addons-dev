@@ -1,33 +1,45 @@
 {
   "name": "ESPHome Smart Updater",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "esphome_smart_updater",
   "description": "Automatically update all ESPHome devices intelligently with resume capability",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "application",
   "boot": "manual",
   "init": false,
+
+  "homeassistant_api": true,
   "hassio_api": true,
   "hassio_role": "default",
-  "homeassistant_api": true,
+
   "host_network": true,
-  "privileged": ["SYS_ADMIN"],
-  "apparmor": false,
+
   "docker_api": true,
+  "apparmor": false,
+
+  "privileged": ["SYS_ADMIN"],
+
+  "map": ["config:rw"],
+
+  "environment": {
+    "DOCKER_HOST": "unix:///run/docker.sock"
+  },
+
   "options": {
     "ota_password": "9c590ad5e0d08168b66b8ef48bd103e2",
     "skip_offline": true,
-    "delay_between_updates": 3
+    "delay_between_updates": 3,
+    "esphome_container": "addon_15ef4d2f_esphome"
   },
   "schema": {
     "ota_password": "str",
     "skip_offline": "bool",
-    "delay_between_updates": "int(1,60)"
+    "delay_between_updates": "int(1,60)",
+    "esphome_container": "str?"
   },
-  "map": [
-    "config:rw"
-  ],
+
   "ports": {},
   "ports_description": {},
+
   "url": "https://github.com/CSJudd/ha-addons-dev/tree/master/esphome_smart_updater"
 }
