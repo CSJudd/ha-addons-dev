@@ -52,3 +52,10 @@ Changed
   - Otherwise: compile locally inside add-on via a persistent venv at /data/venv (no Docker required).
 - `docker_api` is now optional. Set `compile_mode` to control behavior: auto | docker | builtin.
 - Zero hard-coded socket paths; no more startup crashes if Docker socket is absent.
+
+# ---------------------------------------------------------------------------------------------
+## [1.1.0] - 2025-10-26
+Fixed
+- Replace unavailable Alpine package `python3-venv` with `py3-virtualenv` and `py3-pip`.
+- Venv creation now uses `python3 -m virtualenv /data/venv`, ensuring pip is available inside venv.
+- Keeps docker-exec path optional; builtin compiler is default and resilient.

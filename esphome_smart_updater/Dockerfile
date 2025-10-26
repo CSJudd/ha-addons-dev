@@ -6,15 +6,15 @@ FROM ${BUILD_FROM}
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
 # Runtime deps:
-# - python3 (venv creation + runtime)
-# - py3-requests for OTA
-# - curl/jq for basic checks
-# - iputils for ping
-# - docker-cli only if user wants docker mode (lightweight)
+# - python3 + py3-requests (HTTP OTA)
+# - py3-virtualenv + py3-pip (to create a venv WITH pip inside)
+# - curl/jq/iputils (helpers)
+# - docker-cli (only used if compile_mode uses docker)
 RUN apk add --no-cache \
       python3 \
       py3-requests \
-      python3-venv \
+      py3-virtualenv \
+      py3-pip \
       curl \
       jq \
       iputils \

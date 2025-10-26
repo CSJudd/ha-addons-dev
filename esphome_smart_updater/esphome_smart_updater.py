@@ -35,14 +35,14 @@ def log(msg: str):
 def load_options():
     opts = DEFAULTS.copy()
     if ADDON_OPTIONS_PATH.exists():
-      try:
-        with ADDON_OPTIONS_PATH.open("r", encoding="utf-8") as f:
-            loaded = json.load(f)
-        for k in DEFAULTS:
-            if k in loaded:
-                opts[k] = loaded[k]
-      except Exception as e:
-          log(f"Warning: failed to parse options.json: {e}")
+        try:
+            with ADDON_OPTIONS_PATH.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            for k in DEFAULTS:
+                if k in loaded:
+                    opts[k] = loaded[k]
+        except Exception as e:
+            log(f"Warning: failed to parse options.json: {e}")
     return opts
 
 def load_progress():
@@ -76,7 +76,6 @@ def ping_host(host: str, count: int = 1, timeout: int = 1) -> bool:
     except FileNotFoundError:
         return True
 
-# ---------- discovery/versioning stubs (plug in your own if you have them) ----------
 def discover_devices() -> List[dict]:
     esphome_dir = Path("/config/esphome")
     devices = []
@@ -85,14 +84,10 @@ def discover_devices() -> List[dict]:
     return devices
 
 def read_versions(_, __) -> Tuple[str, str]:
-    # Placeholder: wire up to your version inventory if available
     return ("unknown", "unknown")
 
-# ---------- compile/upload backends ----------
 def _docker_env():
-    env = os.environ.copy()
-    # DOCKER_HOST set by run.sh if docker path is usable; not required here
-    return env
+    return os.environ.copy()
 
 def compile_via_docker(container: str, yaml_name: str, device_name: str) -> Optional[str]:
     log(f"→ [docker] Compiling {yaml_name} in {container}")
@@ -133,7 +128,6 @@ def compile_via_builtin(yaml_name: str, device_name: str) -> Optional[str]:
         log(f"✗ Compilation failed for {device_name}")
         return None
 
-    # Built-in compile output path is identical to ESPHome container
     build_dir = f"/config/esphome/.esphome/build/{Path(yaml_name).stem}/"
     bin_name = f"{Path(yaml_name).stem}.bin"
     src_path = Path(build_dir) / bin_name
@@ -162,13 +156,12 @@ def ota_upload(bin_path: str, address: str, ota_password: str) -> bool:
         log(f"OTA error: {e}")
         return False
 
-# ---------- main ----------
 def main():
     ensure_paths()
     opts = load_options()
     progress = load_progress()
 
-    mode = os.environ.get("SMART_UPDATER_MODE", "builtin")  # set by run.sh
+    mode = os.environ.get("SMART_UPDATER_MODE", "builtin")
     esphome_container = os.environ.get("SMART_UPDATER_ESPHOME_CONTAINER", opts["esphome_container"])
 
     log("=" * 79)
@@ -176,7 +169,6 @@ def main():
     log(f"Mode: {mode}")
     log("=" * 79)
 
-    # Discovery
     devices = discover_devices()
     total = len(devices)
     log(f"Found {total} total devices to consider")
@@ -185,7 +177,6 @@ def main():
     progress.setdefault("failed", [])
     progress.setdefault("skipped", [])
 
-    # Settings
     skip_offline = bool(opts["skip_offline"])
     delay = int(opts["delay_between_updates"])
     ota_password = str(opts["ota_password"])
@@ -207,8 +198,7 @@ def main():
         deployed, current = read_versions(esphome_container, yaml_name)
         log(f"Deployed: {deployed} | Current: {current}")
 
-        # Decision stub (always update for now)
-        needs_update = True
+        needs_update = True  # plug in your actual version logic here
         if not needs_update:
             progress["skipped"].append(name)
             save_progress(progress)
