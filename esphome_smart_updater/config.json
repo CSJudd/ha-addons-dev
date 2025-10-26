@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Smart Updater",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "slug": "esphome_smart_updater",
   "description": "Automatically update all ESPHome devices intelligently with resume capability",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
