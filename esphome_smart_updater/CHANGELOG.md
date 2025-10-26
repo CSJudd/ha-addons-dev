@@ -43,3 +43,12 @@ Fixed
 - Robust Docker socket detection: supports both /run/docker.sock and /var/run/docker.sock.
 - Removed hardcoded DOCKER_HOST from config; now set dynamically in entrypoint.
 - Keeps Alpine-only Python deps (py3-requests) to avoid PEP 668 issues.
+
+# ---------------------------------------------------------------------------------------------
+## [1.0.4] - 2025-10-26
+Changed
+- New compile strategy with automatic fallback:
+  - If Docker socket + ESPHome container available: compile via `docker exec`.
+  - Otherwise: compile locally inside add-on via a persistent venv at /data/venv (no Docker required).
+- `docker_api` is now optional. Set `compile_mode` to control behavior: auto | docker | builtin.
+- Zero hard-coded socket paths; no more startup crashes if Docker socket is absent.
