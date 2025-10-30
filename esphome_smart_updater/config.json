@@ -15,11 +15,8 @@
   "host_network": true,
 
   "docker_api": true,
-
-  "watchdog": false,
-
+  
   "apparmor": false,
-
   "privileged": ["SYS_ADMIN"],
 
   "map": ["config:rw", "data:rw"],
