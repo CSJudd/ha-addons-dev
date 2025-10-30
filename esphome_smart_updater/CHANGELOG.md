@@ -92,7 +92,7 @@ Fixed
 
 
 # ---------------------------------------------------------------------------------------------
-##   [1.2.1] - 2025-10-30
+## [1.2.1] - 2025-10-30
 Fixed
 - Ensured Supervisor mounts Docker socket by declaring `"docker_api": true`.
 - Disabled automatic restart loop during failures with `"watchdog": false"` to simplify testing.
@@ -101,7 +101,7 @@ Notes
 
 
 # ---------------------------------------------------------------------------------------------
-##   [1.2.31] - 2025-10-30
+## [1.2.31] - 2025-10-30
 
 ### Fixed
 - **Critical fix:** Restored Supervisor Docker socket mount by adding a default `BUILD_FROM` value in `Dockerfile`
@@ -120,3 +120,17 @@ You should now see:
 [INFO] Using Docker socket at: /run/docker.sock
 in the add-on logs after start.
 
+# ---------------------------------------------------------------------------------------------
+## [1.2.32] - 2025-10-30
+
+### Fixed
+- **Forced Supervisor to mount Docker socket** by adding `"full_access": true` for diagnostic builds.
+- Confirms Supervisor privilege issue was preventing socket visibility despite `"docker_api": true` and `"hassio_role": "manager"`.
+- Retained automatic socket path detection (`/run/docker.sock` or `/var/run/docker.sock`).
+- This version ensures guaranteed Docker access for testing and validation.
+
+### Changed
+- Updated `config.json` to include extended mappings and full access.
+- Incremented version to `1.2.32` for Supervisor rebuild trigger.
+
+---

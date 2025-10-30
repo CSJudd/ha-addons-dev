@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Smart Updater",
-  "version": "1.2.31",
+  "version": "1.2.32",
   "slug": "esphome_smart_updater",
   "description": "Automatically update all ESPHome devices intelligently with resume capability",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
@@ -11,13 +11,15 @@
   "homeassistant_api": true,
   "hassio_api": true,
   "hassio_role": "manager",
+  
+  "full_access": true,
 
   "host_network": true,
   "docker_api": true,
 
   "apparmor": false,
   "privileged": ["SYS_ADMIN"],
-  "map": ["config:rw", "data:rw"],
+  "map": ["config:rw", "data:rw", "share:rw", "addons:rw", "ssl:rw", "backup:rw"],
 
   "options": {
     "ota_password": "9c590ad5e0d08168b66b8ef48bd103e2",
