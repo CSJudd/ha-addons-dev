@@ -98,3 +98,25 @@ Fixed
 - Disabled automatic restart loop during failures with `"watchdog": false"` to simplify testing.
 Notes
 - Rebuild/reinstall is required after changing add-on capabilities so the socket bind is applied.
+
+
+# ---------------------------------------------------------------------------------------------
+##   [1.2.31] - 2025-10-30
+
+### Fixed
+- **Critical fix:** Restored Supervisor Docker socket mount by adding a default `BUILD_FROM` value in `Dockerfile`
+  - Previous builds lacked a valid base image, preventing `/run/docker.sock` from being passed into the container
+  - Root cause: `ARG BUILD_FROM` was declared without a fallback, causing Supervisor to treat the image as untrusted
+- Ensured `hassio_role: "manager"` and `docker_api: true` are honored consistently
+- Verified `Dockerfile` now builds from `ghcr.io/home-assistant/amd64-base:3.19` to comply with Supervisor security model
+
+### Changed
+- Updated `Dockerfile` comments and structure for clarity and HA compliance
+- Incremented add-on version to `1.2.31` for repository and Supervisor rebuild triggering
+
+### Notes
+This version **enables Docker exec functionality** correctly.  
+You should now see:
+[INFO] Using Docker socket at: /run/docker.sock
+in the add-on logs after start.
+

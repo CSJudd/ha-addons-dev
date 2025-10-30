@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Smart Updater",
-  "version": "1.2.3",
+  "version": "1.2.31",
   "slug": "esphome_smart_updater",
   "description": "Automatically update all ESPHome devices intelligently with resume capability",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
@@ -21,15 +21,15 @@
 
   "options": {
     "ota_password": "9c590ad5e0d08168b66b8ef48bd103e2",
-    "skip_offline": true,
     "delay_between_updates": 3,
-    "esphome_container": "addon_15ef4d2f_esphome"
+    "esphome_container": "addon_15ef4d2f_esphome",
+    "skip_offline": true
   },
   "schema": {
     "ota_password": "str",
-    "skip_offline": "bool",
     "delay_between_updates": "int(1,60)",
-    "esphome_container": "str"
+    "esphome_container": "str",
+    "skip_offline": "bool"
   },
 
   "ports": {},
