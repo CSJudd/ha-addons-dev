@@ -149,3 +149,10 @@ in the add-on logs after start.
 - Updated firmware path for ESPHome ≥ 2025.9 (moved from `.esphome/build/...` to `build/...`)
 - Prevented false "Could not copy binary" errors during compilation step
 - Added fallback detection for legacy path to maintain compatibility with older ESPHome add-ons
+
+
+# ---------------------------------------------------------------------------------------------
+##  [1.2.38] - 2025-10-30
+### Fixed
+- Remove unsupported `--no-logs` flag from `esphome upload` CLI invocation that caused OTA to fail immediately on ESPHome 2025.10.x.
+- Improve uploader failure diagnostics by logging the last lines of stdout/stderr.
