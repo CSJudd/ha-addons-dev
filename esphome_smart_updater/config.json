@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Smart Updater",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "slug": "esphome_smart_updater",
   "description": "Automatically update all ESPHome devices intelligently with resume capability",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
@@ -14,11 +14,11 @@
 
   "host_network": true,
 
-  "docker_api": false,
+  "docker_api": true,
 
   "apparmor": false,
 
-  "privileged": [],
+  "privileged": ["SYS_ADMIN"],
 
   "map": ["config:rw", "data:rw"],
 
@@ -26,15 +26,13 @@
     "ota_password": "",
     "skip_offline": true,
     "delay_between_updates": 3,
-    "compile_mode": "auto",
     "esphome_container": "addon_15ef4d2f_esphome"
   },
   "schema": {
     "ota_password": "str",
     "skip_offline": "bool",
     "delay_between_updates": "int(1,60)",
-    "compile_mode": "list(auto|docker|builtin)",
-    "esphome_container": "str?"
+    "esphome_container": "str"
   },
 
   "ports": {},

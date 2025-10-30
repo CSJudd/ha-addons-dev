@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Configurable delay between updates
 - Skip offline devices option
 
+
 # ---------------------------------------------------------------------------------------------
 ## [1.0.1] - 2025-10-26
  - installs the Docker client in the add-on,
@@ -32,10 +33,12 @@ All notable changes to this project will be documented in this file.
  - adds a configurable ESPHome container name (defaults to the official add-on container: addon_15ef4d2f_esphome),
  - keeps everything else you described (logging, resume, skip offline, delay).
 
+
 # ---------------------------------------------------------------------------------------------
 ## [1.0.2] - 2025-10-26
 Fixed
 - Resolve build failure on Alpine 3.19 due to PEP 668 by replacing pip install with APK package (py3-requests).
+
 
 # ---------------------------------------------------------------------------------------------
 ## [1.0.3] - 2025-10-26
@@ -43,6 +46,7 @@ Fixed
 - Robust Docker socket detection: supports both /run/docker.sock and /var/run/docker.sock.
 - Removed hardcoded DOCKER_HOST from config; now set dynamically in entrypoint.
 - Keeps Alpine-only Python deps (py3-requests) to avoid PEP 668 issues.
+
 
 # ---------------------------------------------------------------------------------------------
 ## [1.0.4] - 2025-10-26
@@ -53,12 +57,14 @@ Changed
 - `docker_api` is now optional. Set `compile_mode` to control behavior: auto | docker | builtin.
 - Zero hard-coded socket paths; no more startup crashes if Docker socket is absent.
 
+
 # ---------------------------------------------------------------------------------------------
 ## [1.1.0] - 2025-10-26
 Fixed
 - Replace unavailable Alpine package `python3-venv` with `py3-virtualenv` and `py3-pip`.
 - Venv creation now uses `python3 -m virtualenv /data/venv`, ensuring pip is available inside venv.
 - Keeps docker-exec path optional; builtin compiler is default and resilient.
+
 
 # ---------------------------------------------------------------------------------------------
 ## [1.1.1] - 2025-10-26
@@ -71,3 +77,15 @@ Fixed
   - Progress is saved immediately, preventing restarts from repeating completed devices.
   - Prevents the add-on from continuing updates after being stopped.
 - Maintains all prior functionality and resume logic for both Docker and built-in compile modes.
+
+
+# ---------------------------------------------------------------------------------------------
+## [1.2.0] - 2025-10-30
+Changed
+- Switched to Docker-exec-only compilation (inside official ESPHome add-on) because ESPHome
+  PlatformIO toolchains for ESP8266/ESP32 require glibc and do not run on Alpine (musl).
+- Removed builtin/venv compiler path to avoid toolchain failures ("xtensa-lx106-elf-g++: not found").
+- Add-on now requires Supervisor Docker socket (`docker_api: true`) and validates container name.
+Fixed
+- Robust stop handling: kill entire compiler process group on stop to prevent continued runs after
+  the add-on is stopped; persist progress immediately.
