@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, signal, subprocess, sys, time, shlex, re, ipaddress
+import json, os, signal, subprocess, sys, time, shlex, ipaddress
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Tuple
@@ -20,7 +20,6 @@ STOP_REQUESTED = False
 CURRENT_CHILD: Optional[subprocess.Popen] = None
 
 def ts() -> str: return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-
 def log(msg: str):
     line = f"{ts()} {msg}"
     print(line, flush=True)
@@ -40,7 +39,6 @@ def _sig_handler(signum, frame):
         except Exception:
             try: CURRENT_CHILD.terminate()
             except Exception: pass
-
 signal.signal(signal.SIGTERM, _sig_handler)
 signal.signal(signal.SIGINT, _sig_handler)
 
@@ -56,44 +54,41 @@ def load_options():
             log(f"Warning: options.json parse error: {e}")
     return opts
 
+def _load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
 def load_progress():
-    if PROGRESS_FILE.exists():
-        try: return json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
-        except Exception: return {}
-    return {}
+    data = _load_json(PROGRESS_FILE, {})
+    # normalize + dedupe to prevent runaway counts
+    for k in ("done","failed","skipped"):
+        v = data.get(k, [])
+        if isinstance(v, list):
+            data[k] = list(dict.fromkeys(v))  # order preserving dedupe
+        else:
+            data[k] = []
+    return data
 
 def save_progress(data: dict):
+    # ensure dedupe on write too
+    for k in ("done","failed","skipped"):
+        v = data.get(k, [])
+        data[k] = list(dict.fromkeys(v)) if isinstance(v, list) else []
     try:
         PROGRESS_FILE.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     except Exception as e:
         log(f"Warning: failed to write progress: {e}")
 
-# ---------- dashboard address mapping ----------
-
-def _read_dashboard_map() -> dict:
-    """
-    Parse /config/esphome/.esphome/dashboard.json (host volume).
-    Returns dict: { "<yaml_basename>": {"address": "<ip or mdns>", "name": "<esphome name>"} }
-    """
-    m: dict[str, dict] = {}
-    if not DASHBOARD_JSON_HOST.exists():
-        return m
+def ping_ip(ip: str, count: int = 1, timeout: int = 1) -> bool:
     try:
-        data = json.loads(DASHBOARD_JSON_HOST.read_text(encoding="utf-8"))
-        # dashboard.json is a list of entries; tolerate both dict/list shapes
-        items = data if isinstance(data, list) else data.get("entries") or []
-        for entry in items:
-            # We look for configuration path and address and (optionally) the esphome name
-            cfg = (entry.get("configuration") or "").strip()
-            addr = (entry.get("address") or "").strip()
-            name = (entry.get("name") or "").strip()
-            if not cfg:
-                continue
-            base = Path(cfg).name  # ai001.yaml
-            m[base] = {"address": addr, "name": name}
-    except Exception as e:
-        log(f"Warning: failed to parse dashboard.json: {e}")
-    return m
+        rc = subprocess.run(["ping","-c",str(count),"-W",str(timeout),ip],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+        return rc == 0
+    except FileNotFoundError:
+        # If ping is missing, don’t block updates
+        return True
 
 def _is_ip(s: str) -> bool:
     try:
@@ -102,7 +97,7 @@ def _is_ip(s: str) -> bool:
     except Exception:
         return False
 
-# ---------- process utils ----------
+# ---------------- Docker helpers ----------------
 
 def _run(cmd: list[str], env: Optional[dict]=None) -> int:
     global CURRENT_CHILD
@@ -118,8 +113,6 @@ def _run_out(cmd: list[str], env: Optional[dict]=None) -> tuple[int,str,str]:
     if STOP_REQUESTED: return (143,"","")
     p = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return (p.returncode, p.stdout, p.stderr)
-
-# ---------- docker helpers ----------
 
 def docker_exec(container: str, args: list[str]) -> int:
     return _run(["docker","exec",container] + args, os.environ.copy())
@@ -139,25 +132,63 @@ def docker_file_exists(container: str, filepath: str) -> bool:
 def docker_dir_exists(container: str, dirpath: str) -> bool:
     return docker_exec(container, ["test","-d",dirpath]) == 0
 
-# ---------- ping ----------
+# ---------------- Dashboard address map ----------------
 
-def ping_host(host: str, count: int = 1, timeout: int = 1) -> bool:
+def _read_dashboard_map_from_host() -> dict:
+    m: dict[str, dict] = {}
+    if not DASHBOARD_JSON_HOST.exists():
+        return m
     try:
-        rc = subprocess.run(["ping","-c",str(count),"-W",str(timeout),host],
-                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode
-        return rc == 0
-    except FileNotFoundError:
-        # If ping not available in our image, don't block updates
-        return True
+        data = json.loads(DASHBOARD_JSON_HOST.read_text(encoding="utf-8"))
+        items = data if isinstance(data, list) else data.get("entries") or []
+        for entry in items:
+            cfg = (entry.get("configuration") or "").strip()
+            addr = (entry.get("address") or "").strip()
+            name = (entry.get("name") or "").strip()
+            if not cfg:
+                continue
+            base = Path(cfg).name
+            m[base] = {"address": addr, "name": name}
+    except Exception as e:
+        log(f"Warning: failed to parse host dashboard.json: {e}")
+    return m
 
-# ---------- firmware path discovery ----------
+def _read_dashboard_map_from_container(container: str) -> dict:
+    """
+    Read /data/dashboard.json from the ESPHome container — this file is authoritative
+    for current device addresses as shown in the dashboard UI.
+    """
+    m: dict[str, dict] = {}
+    rc, out, err = docker_exec_shell_out(container, 'cat /data/dashboard.json 2>/dev/null || true')
+    if rc != 0 or not out.strip():
+        return m
+    try:
+        data = json.loads(out)
+        items = data if isinstance(data, list) else data.get("entries") or []
+        for entry in items:
+            cfg = (entry.get("configuration") or "").strip()
+            addr = (entry.get("address") or "").strip()
+            name = (entry.get("name") or "").strip()
+            if not cfg:
+                continue
+            base = Path(cfg).name
+            m[base] = {"address": addr, "name": name}
+    except Exception as e:
+        log(f"Warning: failed to parse container dashboard.json: {e}")
+    return m
+
+def read_address_map(esphome_container: str) -> dict:
+    m = _read_dashboard_map_from_host()
+    if not m:
+        m = _read_dashboard_map_from_container(esphome_container)
+    return m
+
+# ---------------- Firmware path discovery ----------------
 
 def _pull_name_from_data_build_path(p: str) -> str:
-    # p = /data/build/<name>/.pioenvs/<name>/firmware.bin
+    # /data/build/<name>/.pioenvs/<name>/firmware.bin
     try:
-        left = p.split("/data/build/")[1]
-        name = left.split("/.pioenvs/")[0]
-        return name
+        return p.split("/data/build/")[1].split("/.pioenvs/")[0]
     except Exception:
         return ""
 
@@ -168,30 +199,29 @@ def _score_candidate(stem: str, name: str) -> int:
     return 0
 
 def _find_firmware_and_esphome_name(container: str, stem: str) -> Tuple[Optional[str], Optional[str]]:
-    # A) modern /data path (preferred)
+    # Preferred: modern /data paths
     rc, out, _ = docker_exec_shell_out(
         container,
         r'ls -1d /data/build/*/.pioenvs/*/firmware.bin 2>/dev/null || true'
     )
     candidates = [p for p in out.strip().splitlines() if p]
     if candidates:
-        # pick the best match for this stem
         candidates.sort(key=lambda p: _score_candidate(stem, _pull_name_from_data_build_path(p)), reverse=True)
         best = candidates[0]
         esphome_name = _pull_name_from_data_build_path(best)
         return best, esphome_name or stem
 
-    # B) new path under /config/esphome/build/<stem>/<stem>.bin
+    # New local path
     new_bin = f"/config/esphome/build/{stem}/{stem}.bin"
     if docker_file_exists(container, new_bin):
         return new_bin, stem
 
-    # C) legacy path under /config/esphome/.esphome/build/<stem>/<stem>.bin
+    # Legacy local path
     old_bin = f"/config/esphome/.esphome/build/{stem}/{stem}.bin"
     if docker_file_exists(container, old_bin):
         return old_bin, stem
 
-    # D) wildcard last resort
+    # Wildcard last resort
     for d in (f"/config/esphome/build/{stem}", f"/config/esphome/.esphome/build/{stem}"):
         if docker_dir_exists(container, d):
             rc2, out2, _ = docker_exec_shell_out(container, f'ls -1 {shlex.quote(d)}/*.bin 2>/dev/null | head -n1')
@@ -201,7 +231,7 @@ def _find_firmware_and_esphome_name(container: str, stem: str) -> Tuple[Optional
 
     return None, None
 
-# ---------- compile + upload ----------
+# ---------------- Compile + Upload ----------------
 
 def compile_in_esphome_container(container: str, yaml_name: str, device_name: str) -> Tuple[Optional[str], Optional[str]]:
     log(f"→ Compiling {yaml_name} via docker in '{container}'")
@@ -229,11 +259,6 @@ def compile_in_esphome_container(container: str, yaml_name: str, device_name: st
     return dst_path, esphome_name
 
 def upload_via_esphome(container: str, yaml_name: str, target: str) -> bool:
-    """
-    Use the ESPHome uploader inside its own container:
-      esphome upload /config/esphome/<yaml> --device <target> --no-logs
-    Where <target> can be an IP or a mDNS host (e.g. foo.local).
-    """
     log(f"→ Uploading via ESPHome: {yaml_name} → {target}")
     rc, out, err = docker_exec_out(
         container,
@@ -242,14 +267,14 @@ def upload_via_esphome(container: str, yaml_name: str, target: str) -> bool:
     if rc == 0:
         log("→ OTA upload reported success.")
         return True
-    snippet = (out or err or "").strip().splitlines()[-20:]
-    if snippet:
+    tail = (out or err or "").strip().splitlines()[-20:]
+    if tail:
         log("OTA uploader output (tail):")
-        for line in snippet:
+        for line in tail:
             log(f"  {line}")
     return False
 
-# ---------- device discovery ----------
+# ---------------- Discovery ----------------
 
 def discover_devices() -> List[dict]:
     esphome_dir = Path("/config/esphome")
@@ -258,16 +283,16 @@ def discover_devices() -> List[dict]:
 def read_versions(_, __) -> Tuple[str,str]:
     return ("unknown","unknown")
 
-# ---------- main ----------
+# ---------------- Main ----------------
 
 def main():
     opts = load_options()
     progress = load_progress()
-    dashboard_map = _read_dashboard_map()
-
     esphome_container = opts["esphome_container"]
     skip_offline = bool(opts["skip_offline"])
     delay = int(opts["delay_between_updates"])
+
+    addr_map = read_address_map(esphome_container)
 
     log("="*79)
     log("ESPHome Smart Updater (Docker exec mode)")
@@ -297,56 +322,57 @@ def main():
         deployed,current = read_versions(esphome_container, yaml_name)
         log(f"Deployed: {deployed} | Current: {current}")
 
-        # look up address in dashboard.json (IP or *.local) by yaml basename
+        # address preference: dashboard IP/host -> stem.local (later)
         addr = ""
-        entry = dashboard_map.get(yaml_name)
+        entry = addr_map.get(yaml_name)
         if entry:
             addr = (entry.get("address") or "").strip()
-            # Some dashboards store hostname without .local; if it looks like a name and not an IP, add .local
-            if addr and not _is_ip(addr) and not addr.endswith(".local"):
-                addr = addr + ".local"
+            if addr:
+                log(f"Address (dashboard): {addr}")
 
-        # If still empty, fall back to esphome name (from compile discovery later) or stem.local
-        preferred_target = addr if addr else f"{name}.local"
-        if addr:
-            log(f"Address (dashboard): {addr}")
-
-        # Optional online check
-        if skip_offline:
-            # If addr is empty we try to ping the fallback anyway; harmless if it fails
-            if not ping_host(preferred_target):
+        # ping ONLY if we have a numeric IP; skip ping for hostnames/mdns
+        if skip_offline and addr and _is_ip(addr):
+            if not ping_ip(addr):
                 log(f"Device appears offline; skipping: {name}")
-                progress["skipped"].append(name); save_progress(progress); continue
+                if name not in progress["skipped"]:
+                    progress["skipped"].append(name)
+                save_progress(progress)
+                continue
+        elif skip_offline and addr and not _is_ip(addr):
+            log("Non-numeric address (likely mDNS); skipping ping and proceeding to uploader.")
 
         log(f"Starting update for {name}")
         bin_path, esphome_name = compile_in_esphome_container(esphome_container, yaml_name, name)
-
         if STOP_REQUESTED:
             log("Stop requested during compile; saving progress and exiting.")
             break
-
         if not bin_path:
-            progress["failed"].append(name); save_progress(progress); continue
+            if name not in progress["failed"]:
+                progress["failed"].append(name)
+            save_progress(progress)
+            continue
 
-        # Choose upload target: prefer dashboard addr; else the esphome build name; else stem.local
-        target = preferred_target
-        if not addr:
-            if esphome_name:
-                target = f"{esphome_name}.local"
-                log(f"No dashboard address; using mDNS target: {target}")
-            else:
-                target = f"{name}.local"
-                log(f"No dashboard address or build name; using fallback: {target}")
+        # Choose upload target: prefer dashboard address if present; else esphome_name.local; else stem.local
+        if addr:
+            target = addr
+        elif esphome_name:
+            target = f"{esphome_name}.local"
+            log(f"No dashboard address; using mDNS target: {target}")
+        else:
+            target = f"{name}.local"
+            log(f"No dashboard address or build name; using fallback: {target}")
 
         ok = upload_via_esphome(esphome_container, yaml_name, target)
-
         if ok:
             log(f"✓ Successfully updated {name}")
-            if name in progress["failed"]: progress["failed"].remove(name)
-            progress["done"].append(name)
+            if name in progress["failed"]:
+                progress["failed"] = [x for x in progress["failed"] if x != name]
+            if name not in progress["done"]:
+                progress["done"].append(name)
         else:
             log(f"✗ Update failed for {name}")
-            progress["failed"].append(name)
+            if name not in progress["failed"]:
+                progress["failed"].append(name)
 
         save_progress(progress)
 
@@ -357,12 +383,13 @@ def main():
             log("Stop requested after delay; saving progress and exiting.")
             break
 
+    # Final dedupe + summary
+    save_progress(progress)
     log(""); log("Summary:")
     log(f"  Done:   {len(progress['done'])}")
     log(f"  Failed: {len(progress['failed'])}")
     log(f"  Skipped:{len(progress['skipped'])}")
     log("All done.")
-    save_progress(progress)
 
 if __name__ == "__main__":
     main()
