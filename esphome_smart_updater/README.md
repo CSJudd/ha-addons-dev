@@ -1,76 +1,81 @@
 # ESPHome Smart Updater Add-on
 
-Automatically update all ESPHome devices intelligently with resume capability for Home Assistant OS.
+Automatically update all ESPHome devices intelligently with resume capability for **Home Assistant OS**.  
+Now uses **Docker exec** to compile firmware safely inside the official ESPHome add-on container.
 
-## Features
+---
 
-- **Smart Updates**: Only updates devices where `deployed_version ≠ current_version`
-- **Offline Detection**: Pings devices before updating, skips offline devices
-- **Resume Capability**: Tracks progress and can resume if interrupted
-- **Comprehensive Logging**: All actions logged to `/config/esphome_smart_update.log`
-- **Integration Ready**: Easily triggered by Home Assistant automations
-- **Bulk Processing**: Handles 375+ devices efficiently
+## 🚀 Features
 
-## Installation
+- **Smart Updates** – Only updates devices where `deployed_version ≠ current_version`
+- **Offline Detection** – Pings devices before updating, skips offline devices
+- **Resume Capability** – Tracks progress and can resume if interrupted
+- **Comprehensive Logging** – Logs to `/config/esphome_smart_update.log`
+- **Integration Ready** – Trigger from Home Assistant automations or scripts
+- **Bulk Processing** – Handles 375+ devices efficiently
+- **Safe Compilation** – Builds inside the ESPHome add-on (no toolchain issues)
+- **Graceful Stop** – Handles Supervisor stop signals, terminates safely, and preserves progress
 
-### Step 1: Add the Repository
+---
 
-1. Navigate to **Supervisor** → **Add-on Store** → **⋮** (three dots menu, top right)
-2. Select **Repositories**
-3. Add this repository URL (or your local path):
-   ```
-   https://github.com/CSJudd/ha-addons-dev.git
-   ```
-4. Click **Add** then **Close**
+## ⚙️ Requirements
 
-### Step 2: Install the Add-on
+- Home Assistant OS or Supervisor
+- Official **ESPHome** add-on installed and running
+- Supervisor Docker socket access (`docker_api: true`, `hassio_role: "manager"`)
+- Correct ESPHome container name (default: `addon_15ef4d2f_esphome`)
 
-1. Refresh the add-on store page
-2. Find **ESPHome Smart Updater** in the list
-3. Click on it and press **Install**
-4. Wait for installation to complete
+---
 
-### Step 3: Configure the Add-on
+## 🧩 Installation
 
-Click the **Configuration** tab and set:
+### Step 1 — Add the Repository
+
+1. Open **Settings → Add-ons → Add-on Store**
+2. Click **⋮ → Repositories**
+3. Add  
+   `https://github.com/CSJudd/ha-addons-dev.git`
+4. Click **Add**, then **Close**, then **Reload**
+
+### Step 2 — Install the Add-on
+
+1. Find **ESPHome Smart Updater**
+2. Click **Install**
+3. Wait for installation to complete
+
+### Step 3 — Configure
 
 ```yaml
-ota_password: "9c590ad5e0d08168b66b8ef48bd103e2"
+ota_password: "YOUR_ESPHOME_OTA_PASSWORD"
 skip_offline: true
 delay_between_updates: 3
+esphome_container: "addon_15ef4d2f_esphome"
 ```
-
-**Options explained:**
-- `ota_password`: Your ESPHome OTA password (change if different)
-- `skip_offline`: If `true`, skip devices that don't respond to ping
-- `delay_between_updates`: Seconds to wait between device updates (1-60)
-
-### Step 4: Start the Add-on
-
-1. Go to the **Info** tab
-2. **Disable** "Start on boot" (we'll trigger it via automation)
-3. Click **Start** to test it manually
-
-## Configuration
-
-### Add-on Options
 
 | Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `ota_password` | string | (your password) | ESPHome OTA password for all devices |
-| `skip_offline` | boolean | `true` | Skip devices that don't respond to ping |
-| `delay_between_updates` | integer | `3` | Seconds to wait between updates (1-60) |
+|--------|------|----------|-------------|
+| `ota_password` | string | — | ESPHome OTA password |
+| `skip_offline` | boolean | true | Skip devices that fail ping |
+| `delay_between_updates` | int | 3 | Seconds between updates |
+| `esphome_container` | string | addon_15ef4d2f_esphome | ESPHome container name |
 
-## Usage
+### Step 4 — Start the Add-on
 
-### Method 1: Manual Button
+1. Go to the **Info** tab  
+2. Turn **Start on boot** off (recommended)  
+3. Click **Start**
 
-Create a script in Home Assistant:
+Expected initial log lines:
+```
+[INFO] ESPHome Smart Updater starting (Docker exec mode)...
+[INFO] Using Docker socket at: /run/docker.sock
+```
 
-1. Go to **Settings** → **Automations & Scenes** → **Scripts**
-2. Click **+ Add Script** → **Create new script**
-3. Name it: `ESPHome Update All`
-4. Add this action:
+---
+
+## 🛠️ Usage
+
+### Manual Button Script
 
 ```yaml
 service: hassio.addon_start
@@ -78,176 +83,109 @@ data:
   addon: local_esphome_smart_updater
 ```
 
-5. Save the script
-6. Add a button to your dashboard:
+### Scheduled Nightly Update
 
 ```yaml
-type: button
-name: Update ESPHome Devices
-icon: mdi:update
-tap_action:
-  action: call-service
-  service: script.esphome_update_all
+alias: ESPHome Nightly Update
+trigger:
+  - platform: time
+    at: "21:00:00"
+action:
+  - service: hassio.addon_start
+    data:
+      addon: local_esphome_smart_updater
 ```
 
-### Method 2: Scheduled Automation (9 PM Daily)
-
-1. Go to **Settings** → **Automations & Scenes** → **Automations**
-2. Click **+ Create Automation** → **Create new automation**
-3. Name it: `ESPHome Nightly Update`
-4. Add this configuration:
-
-**Trigger:**
-```yaml
-platform: time
-at: '21:00:00'
-```
-
-**Action:**
-```yaml
-service: hassio.addon_start
-data:
-  addon: local_esphome_smart_updater
-```
-
-5. Save the automation
-
-### Method 3: Using Input Boolean Helper
-
-If you have an existing `input_boolean.esphome_update_trigger`:
-
-1. Create an automation:
-
-**Trigger:**
-```yaml
-platform: state
-entity_id: input_boolean.esphome_update_trigger
-to: 'on'
-```
-
-**Actions:**
-1. Start the add-on:
-```yaml
-service: hassio.addon_start
-data:
-  addon: local_esphome_smart_updater
-```
-
-2. Turn off the helper (after 5 seconds):
-```yaml
-delay:
-  seconds: 5
-```
+### Input Boolean Trigger
 
 ```yaml
-service: input_boolean.turn_off
-target:
-  entity_id: input_boolean.esphome_update_trigger
+trigger:
+  - platform: state
+    entity_id: input_boolean.esphome_update_trigger
+    to: "on"
+action:
+  - service: hassio.addon_start
+    data:
+      addon: local_esphome_smart_updater
+  - delay: 5
+  - service: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.esphome_update_trigger
 ```
 
-## Monitoring
+---
 
-### View Logs
+## 📋 Monitoring
 
-1. In the add-on page, click the **Log** tab to see real-time progress
-2. Or check the detailed log file at: `/config/esphome_smart_update.log`
+**Logs**
+- Add-on **Log** tab → live output  
+- Persistent file: `/config/esphome_smart_update.log`
 
-### Check Progress
+**Progress File**
+- `/config/esphome_update_progress.json` (used for resume after interruption)
 
-If the update is interrupted, progress is saved to:
+**Example**
 ```
-/config/esphome_update_progress.json
-```
-
-This allows the add-on to resume and skip already-updated devices on the next run.
-
-### Log Example
-
-```
-[2025-10-25 21:00:01] ================================================================================
-[2025-10-25 21:00:01] ESPHome Smart Updater Add-on v1.0
-[2025-10-25 21:00:01] ================================================================================
-[2025-10-25 21:00:01] Found 375 total devices in ESPHome dashboard
-[2025-10-25 21:00:02] 
-[2025-10-25 21:00:02] [1/375] Processing: ai001
-[2025-10-25 21:00:02]   Config: ai001.yaml
-[2025-10-25 21:00:02]   Address: 10.128.47.1
-[2025-10-25 21:00:02]   Deployed: 2025.9.1 | Current: 2025.10.2
-[2025-10-25 21:00:02]   → Device has update: 2025.9.1 → 2025.10.2
-[2025-10-25 21:00:02] Starting update for ai001
-[2025-10-25 21:00:02]   → Compiling ai001.yaml in container
-[2025-10-25 21:00:45]   → Compilation successful
-[2025-10-25 21:00:45]   → Binary copied to /config/esphome/builds/ai001.bin
-[2025-10-25 21:00:45]   → Uploading firmware to 10.128.47.1
-[2025-10-25 21:01:23] ✓ Successfully updated ai001
+[2025-10-30 21:00:00] ESPHome Smart Updater v1.2.3 (Docker exec mode)
+[2025-10-30 21:00:00] Found 375 devices
+[2025-10-30 21:00:03] [1/375] Processing: ai001
+[2025-10-30 21:00:03] → Compiling ai001.yaml in container addon_15ef4d2f_esphome
+[2025-10-30 21:00:45] ✓ Successfully updated ai001
 ```
 
-## Network Requirements
+---
 
-This add-on requires access to:
-- ESPHome Dashboard: `http://localhost:6052`
-- Docker API: To execute compilation commands
-- Your device network: For OTA updates via HTTP
+## 🧠 Internals
 
-## Device Types Supported
+- Compiles via:  
+  `docker exec <esphome_container> esphome compile /config/esphome/<device>.yaml`
+- Copies resulting `.bin` to `/config/esphome/builds/`
+- Performs OTA via HTTP POST to the device
+- Catches SIGTERM/SIGINT and saves progress before exit
 
-Works with all ESPHome device types including:
-- Ratgdo Openers (GDR)
-- Various outlet brands (Gosund, KMC, Sonoff)
-- Switches and dimmers (MartinJerry, Athom, Kauf)
-- Fan controllers
-- Custom devices
+---
 
-## Troubleshooting
+## 🧰 Troubleshooting
 
-### Add-on won't start
-- Check that ESPHome add-on is running
-- Verify the OTA password is correct
-- Check add-on logs for error messages
+| Symptom | Likely Cause | Fix |
+|--------|--------------|-----|
+| `FATAL: No Docker socket mounted` | Supervisor didn’t mount socket | Ensure `"docker_api": true` and `"hassio_role": "manager"`, then reinstall |
+| `xtensa-lx106-elf-g++ not found` | Old built-in compiler path used | Use version ≥ 1.2 (Docker exec mode). Reinstall if needed |
+| Add-on not visible in Store | Bad JSON in any `config.json` or missing `repository.json` | Remove comments/trailing commas; add root `repository.json` |
+| Repo listed but add-ons hidden | One invalid add-on file hides the repo | Check **Supervisor logs** for the exact file/line |
+| Devices skipped | They were offline during run | Normal behavior |
+| Progress file remains | Some failures pending | Delete `/config/esphome_update_progress.json` if desired |
 
-### Updates failing
-- Ensure devices are online (check ping)
-- Verify ESPHome container name is correct: `addon_15ef4d2f_esphome`
-- Check network connectivity to devices
-- Review detailed logs at `/config/esphome_smart_update.log`
+---
 
-### Progress file not clearing
-- This is normal if some devices are offline or failed
-- The progress file allows resuming interrupted updates
-- Delete manually if needed: `/config/esphome_update_progress.json`
+## 📡 Network Requirements
 
-## Advanced Usage
+- Access to ESPHome dashboard container (local Docker)
+- Access to device IPs for HTTP OTA
+- Supervisor Docker socket (`/run/docker.sock`)
 
-### Custom ESPHome Container Name
+---
 
-If your ESPHome container has a different name, modify line 18 in `esphome_smart_updater.py`:
+## 🧾 Changelog Summary
 
-```python
-CONTAINER_NAME = "your_container_name"
-```
+| Version | Changes |
+|--------|---------|
+| **1.0.0** | Initial release (built-in compiler) |
+| **1.1.x** | Graceful stop, resume; fixed CLI invocation |
+| **1.2.0** | Switched to Docker exec mode (compile inside ESPHome) |
+| **1.2.1** | Removed invalid `watchdog` boolean; JSON schema fixes |
+| **1.2.3** | Require `hassio_role: "manager"` to ensure docker socket mount |
 
-Then rebuild the add-on.
+---
 
-### Adjust Timeout
+## 🧑‍💻 Support
 
-The default timeout per device is 300 seconds (5 minutes). To change:
+1. Check the add-on **Log** tab  
+2. Inspect `/config/esphome_smart_update.log`  
+3. Verify `esphome_container` and device reachability  
+4. Open an issue on the repository if the problem persists
 
-Modify line 17 in `esphome_smart_updater.py`:
-```python
-TIMEOUT_PER_DEVICE = 600  # 10 minutes
-```
+---
 
-## Support
-
-For issues or questions:
-1. Check the add-on logs
-2. Review `/config/esphome_smart_update.log`
-3. Check Home Assistant community forums
-
-## Credits
-
-Created for managing large-scale ESPHome deployments (375+ devices) with intelligent update logic and resume capability.
-
-## License
-
-MIT License
+**Author:** Chris Judd — Large-scale ESPHome management made reliable and repeatable.  
+**License:** MIT
