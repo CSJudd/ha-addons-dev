@@ -7,6 +7,7 @@ from typing import Optional, List, Tuple
 ADDON_OPTIONS_PATH = Path("/data/options.json")
 LOG_FILE = Path("/config/esphome_smart_update.log")
 PROGRESS_FILE = Path("/config/esphome_update_progress.json")
+LAST_VERSION_MARKER = Path("/data/.last_version")
 DASHBOARD_JSON_HOST = Path("/config/esphome/.esphome/dashboard.json")
 
 DEFAULTS = {
@@ -14,6 +15,14 @@ DEFAULTS = {
     "skip_offline": True,
     "delay_between_updates": 3,
     "esphome_container": "addon_15ef4d2f_esphome",
+
+    # new housekeeping toggles
+    "clear_log_on_start": False,
+    "clear_log_on_version_change": True,
+    "clear_log_now": False,
+
+    "clear_progress_on_start": False,
+    "clear_progress_now": False
 }
 
 STOP_REQUESTED = False
@@ -28,7 +37,24 @@ def log(msg: str):
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
-    except Exception: pass
+    except Exception:
+        pass
+
+def truncate_log(why: str):
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LOG_FILE.write_text("", encoding="utf-8")
+        print(f"{ts()} [INFO] Log cleared: {why}", flush=True)
+    except Exception as e:
+        print(f"{ts()} [WARN] Failed to clear log: {e}", flush=True)
+
+def clear_progress(why: str):
+    try:
+        if PROGRESS_FILE.exists():
+            PROGRESS_FILE.unlink()
+        log(f"[INFO] Progress cleared: {why}")
+    except Exception as e:
+        log(f"[WARN] Failed to clear progress: {e}")
 
 # ---------- Signal handling ----------
 def _sig_handler(signum, frame):
@@ -52,7 +78,8 @@ def load_options():
             loaded = json.loads(ADDON_OPTIONS_PATH.read_text(encoding="utf-8"))
             for k in DEFAULTS:
                 if k in loaded: opts[k] = loaded[k]
-        except Exception as e: log(f"Warning: options.json parse error: {e}")
+        except Exception as e:
+            log(f"Warning: options.json parse error: {e}")
     return opts
 
 def _load_json(path: Path, default):
@@ -72,6 +99,40 @@ def save_progress(data: dict):
         data[k] = list(dict.fromkeys(v)) if isinstance(v, list) else []
     try: PROGRESS_FILE.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     except Exception as e: log(f"Warning: failed to write progress: {e}")
+
+# ---------- Version change handling ----------
+def get_running_addon_version() -> str:
+    return os.environ.get("ADDON_VERSION", "").strip() or "unknown"
+
+def ensure_version_marker_and_housekeeping(opts: dict):
+    """Apply clear_* toggles and version-change log clearing before any work."""
+    # On-demand clears
+    if bool(opts.get("clear_log_now", False)):
+        truncate_log("clear_log_now")
+
+    if bool(opts.get("clear_progress_now", False)):
+        clear_progress("clear_progress_now")
+
+    # Always-on clears at each start
+    if bool(opts.get("clear_log_on_start", False)):
+        truncate_log("clear_log_on_start")
+
+    if bool(opts.get("clear_progress_on_start", False)):
+        clear_progress("clear_progress_on_start")
+
+    # Clear on version change
+    running = get_running_addon_version()
+    prev = ""
+    if LAST_VERSION_MARKER.exists():
+        try: prev = LAST_VERSION_MARKER.read_text(encoding="utf-8").strip()
+        except Exception: prev = ""
+    if running and running != prev:
+        if bool(opts.get("clear_log_on_version_change", True)):
+            truncate_log(f"clear_log_on_version_change ({prev or 'none'} -> {running})")
+        try:
+            LAST_VERSION_MARKER.write_text(running, encoding="utf-8")
+        except Exception as e:
+            log(f"Warning: failed to write version marker: {e}")
 
 # ---------- Network ----------
 def ping_ip(ip: str, count: int = 1, timeout: int = 1) -> bool:
@@ -184,26 +245,21 @@ def _dashboard_update_entry(obj, yaml_name: str, deployed: str) -> bool:
     return changed
 
 def write_dashboard_deployed(container: str, yaml_name: str, detected_version: str) -> None:
-    """Write deployed_version updates to both container and host dashboard.json."""
-    # Container version
-    rc, out, _ = docker_exec_shell_out(container, 'cat /data/dashboard.json 2>/dev/null || true')
-    if out.strip():
-        try:
+    try:
+        # Container
+        rc, out, _ = docker_exec_shell_out(container, 'cat /data/dashboard.json 2>/dev/null || true')
+        if out.strip():
             obj = json.loads(out)
             if _dashboard_update_entry(obj, yaml_name, detected_version):
                 payload = json.dumps(obj, indent=2, ensure_ascii=False)
                 docker_exec_shell_out(container, f"printf %s {shlex.quote(payload)} > /data/dashboard.json")
-        except Exception as e:
-            log(f"Warning: failed updating container dashboard.json: {e}")
-
-    # Host mirror
-    if DASHBOARD_JSON_HOST.exists():
-        try:
+        # Host mirror
+        if DASHBOARD_JSON_HOST.exists():
             obj = json.loads(DASHBOARD_JSON_HOST.read_text(encoding="utf-8"))
             if _dashboard_update_entry(obj, yaml_name, detected_version):
                 DASHBOARD_JSON_HOST.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:
-            log(f"Warning: failed updating host dashboard.json: {e}")
+    except Exception as e:
+        log(f"Warning: dashboard update failed: {e}")
 
 # ---------- Firmware discovery ----------
 def _pull_name_from_data_build_path(p: str) -> str:
@@ -288,6 +344,10 @@ def read_versions(_, __) -> Tuple[str,str]:
 # ---------- Main ----------
 def main():
     opts = load_options()
+
+    # housekeeping (logs/progress + version-change)
+    ensure_version_marker_and_housekeeping(opts)
+
     progress = load_progress()
     esphome_container = opts["esphome_container"]
     skip_offline = bool(opts["skip_offline"])

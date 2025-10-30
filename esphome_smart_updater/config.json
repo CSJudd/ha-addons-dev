@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Smart Updater",
-  "version": "1.2.39",
+  "version": "1.2.40",
   "slug": "esphome_smart_updater",
   "description": "Automatically update all ESPHome devices intelligently with resume capability",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
@@ -11,27 +11,43 @@
   "homeassistant_api": true,
   "hassio_api": true,
   "hassio_role": "manager",
-  
-  "full_access": true,
 
   "host_network": true,
   "docker_api": true,
 
+  "watchdog": false,
   "apparmor": false,
+
   "privileged": ["SYS_ADMIN"],
-  "map": ["config:rw", "data:rw", "share:rw", "addons:rw", "ssl:rw", "backup:rw"],
+
+  "map": ["config:rw", "data:rw"],
 
   "options": {
-    "ota_password": "9c590ad5e0d08168b66b8ef48bd103e2",
+    "ota_password": "",
     "delay_between_updates": 3,
     "esphome_container": "addon_15ef4d2f_esphome",
-    "skip_offline": true
+    "skip_offline": true,
+
+    "clear_log_on_start": false,
+    "clear_log_on_version_change": true,
+    "clear_log_now": false,
+
+    "clear_progress_on_start": false,
+    "clear_progress_now": false
   },
+
   "schema": {
     "ota_password": "str",
     "delay_between_updates": "int(1,60)",
     "esphome_container": "str",
-    "skip_offline": "bool"
+    "skip_offline": "bool",
+
+    "clear_log_on_start": "bool",
+    "clear_log_on_version_change": "bool",
+    "clear_log_now": "bool",
+
+    "clear_progress_on_start": "bool",
+    "clear_progress_now": "bool"
   },
 
   "ports": {},

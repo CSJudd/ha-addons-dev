@@ -163,3 +163,17 @@ in the add-on logs after start.
 ### Fixed
 - After successful OTA, update ESPHome Dashboard metadata (`dashboard.json`) so the UI clears the “Update needed” badge.
 - Write `deployed_version` to match `current_version` for the updated YAML entry in both the ESPHome container and the host mirror.
+
+
+# ---------------------------------------------------------------------------------------------
+##  [1.2.34] - 2025-10-30
+### Added
+- New housekeeping options:
+  - clear_log_on_start
+  - clear_log_on_version_change
+  - clear_log_now
+  - clear_progress_on_start
+  - clear_progress_now
+- Detect add-on version via ENV `ADDON_VERSION` and clear log on version change (optional).
+### Fixed
+- Startup order ensures housekeeping executes before any device work.
