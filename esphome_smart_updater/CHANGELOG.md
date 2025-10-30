@@ -156,3 +156,10 @@ in the add-on logs after start.
 ### Fixed
 - Remove unsupported `--no-logs` flag from `esphome upload` CLI invocation that caused OTA to fail immediately on ESPHome 2025.10.x.
 - Improve uploader failure diagnostics by logging the last lines of stdout/stderr.
+
+
+# ---------------------------------------------------------------------------------------------
+##  [1.2.39] - 2025-10-30
+### Fixed
+- After successful OTA, update ESPHome Dashboard metadata (`dashboard.json`) so the UI clears the “Update needed” badge.
+- Write `deployed_version` to match `current_version` for the updated YAML entry in both the ESPHome container and the host mirror.

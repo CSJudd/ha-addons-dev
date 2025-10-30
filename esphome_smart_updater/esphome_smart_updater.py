@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, signal, subprocess, sys, time, shlex, ipaddress
+import json, os, signal, subprocess, sys, time, shlex, ipaddress, re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Tuple
@@ -19,15 +19,18 @@ DEFAULTS = {
 STOP_REQUESTED = False
 CURRENT_CHILD: Optional[subprocess.Popen] = None
 
+# ---------- Logging ----------
 def ts() -> str: return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 def log(msg: str):
     line = f"{ts()} {msg}"
     print(line, flush=True)
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_FILE.open("a", encoding="utf-8") as f: f.write(line + "\n")
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
     except Exception: pass
 
+# ---------- Signal handling ----------
 def _sig_handler(signum, frame):
     global STOP_REQUESTED, CURRENT_CHILD
     STOP_REQUESTED = True
@@ -37,9 +40,11 @@ def _sig_handler(signum, frame):
         except Exception:
             try: CURRENT_CHILD.terminate()
             except Exception: pass
+
 signal.signal(signal.SIGTERM, _sig_handler)
 signal.signal(signal.SIGINT, _sig_handler)
 
+# ---------- Config + progress ----------
 def load_options():
     opts = DEFAULTS.copy()
     if ADDON_OPTIONS_PATH.exists():
@@ -68,6 +73,7 @@ def save_progress(data: dict):
     try: PROGRESS_FILE.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     except Exception as e: log(f"Warning: failed to write progress: {e}")
 
+# ---------- Network ----------
 def ping_ip(ip: str, count: int = 1, timeout: int = 1) -> bool:
     try:
         rc = subprocess.run(["ping","-c",str(count),"-W",str(timeout),ip],
@@ -78,17 +84,19 @@ def ping_ip(ip: str, count: int = 1, timeout: int = 1) -> bool:
 
 def _is_ip(s: str) -> bool:
     try:
-        ipaddress.ip_address(s); return True
+        ipaddress.ip_address(s)
+        return True
     except Exception:
         return False
 
-# -------- docker helpers --------
+# ---------- Docker helpers ----------
 def _run(cmd: list[str], env: Optional[dict]=None) -> int:
     global CURRENT_CHILD
     if STOP_REQUESTED: return 143
     try:
         CURRENT_CHILD = subprocess.Popen(cmd, env=env, preexec_fn=os.setsid)
-        return CURRENT_CHILD.wait()
+        rc = CURRENT_CHILD.wait()
+        return rc
     finally:
         CURRENT_CHILD = None
 
@@ -115,7 +123,7 @@ def docker_file_exists(container: str, filepath: str) -> bool:
 def docker_dir_exists(container: str, dirpath: str) -> bool:
     return docker_exec(container, ["test","-d",dirpath]) == 0
 
-# -------- dashboard address map --------
+# ---------- Dashboard helpers ----------
 def _read_dashboard_map_from_host() -> dict:
     m: dict[str, dict] = {}
     if not DASHBOARD_JSON_HOST.exists(): return m
@@ -154,7 +162,50 @@ def read_address_map(esphome_container: str) -> dict:
     if not m: m = _read_dashboard_map_from_container(esphome_container)
     return m
 
-# -------- firmware discovery --------
+# ---------- Version detection & dashboard update ----------
+def get_esphome_cli_version(container: str) -> str:
+    """Return ESPHome version string, e.g., 2025.10.3"""
+    rc, out, err = docker_exec_out(container, ["esphome", "version"])
+    text = (out or err or "").strip()
+    m = re.search(r'(\d{4}\.\d{1,2}\.\d+)', text) or re.search(r'ESPHome\s+(\d{4}\.\d{1,2}\.\d+)', text)
+    return m.group(1) if m else ""
+
+def _dashboard_update_entry(obj, yaml_name: str, deployed: str) -> bool:
+    changed = False
+    items = obj if isinstance(obj, list) else obj.get("entries") or []
+    for entry in items:
+        cfg = (entry.get("configuration") or "").strip()
+        if not cfg or Path(cfg).name != Path(yaml_name).name:
+            continue
+        current = (entry.get("current_version") or "").strip() or deployed
+        if entry.get("deployed_version") != current:
+            entry["deployed_version"] = current
+            changed = True
+    return changed
+
+def write_dashboard_deployed(container: str, yaml_name: str, detected_version: str) -> None:
+    """Write deployed_version updates to both container and host dashboard.json."""
+    # Container version
+    rc, out, _ = docker_exec_shell_out(container, 'cat /data/dashboard.json 2>/dev/null || true')
+    if out.strip():
+        try:
+            obj = json.loads(out)
+            if _dashboard_update_entry(obj, yaml_name, detected_version):
+                payload = json.dumps(obj, indent=2, ensure_ascii=False)
+                docker_exec_shell_out(container, f"printf %s {shlex.quote(payload)} > /data/dashboard.json")
+        except Exception as e:
+            log(f"Warning: failed updating container dashboard.json: {e}")
+
+    # Host mirror
+    if DASHBOARD_JSON_HOST.exists():
+        try:
+            obj = json.loads(DASHBOARD_JSON_HOST.read_text(encoding="utf-8"))
+            if _dashboard_update_entry(obj, yaml_name, detected_version):
+                DASHBOARD_JSON_HOST.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            log(f"Warning: failed updating host dashboard.json: {e}")
+
+# ---------- Firmware discovery ----------
 def _pull_name_from_data_build_path(p: str) -> str:
     try: return p.split("/data/build/")[1].split("/.pioenvs/")[0]
     except Exception: return ""
@@ -166,9 +217,7 @@ def _score_candidate(stem: str, name: str) -> int:
     return 0
 
 def _find_firmware_and_esphome_name(container: str, stem: str) -> Tuple[Optional[str], Optional[str]]:
-    rc, out, _ = docker_exec_shell_out(
-        container, r'ls -1d /data/build/*/.pioenvs/*/firmware.bin 2>/dev/null || true'
-    )
+    rc, out, _ = docker_exec_shell_out(container, r'ls -1d /data/build/*/.pioenvs/*/firmware.bin 2>/dev/null || true')
     candidates = [p for p in out.strip().splitlines() if p]
     if candidates:
         candidates.sort(key=lambda p: _score_candidate(stem, _pull_name_from_data_build_path(p)), reverse=True)
@@ -190,7 +239,7 @@ def _find_firmware_and_esphome_name(container: str, stem: str) -> Tuple[Optional
 
     return None, None
 
-# -------- compile + upload --------
+# ---------- Compile + Upload ----------
 def compile_in_esphome_container(container: str, yaml_name: str, device_name: str) -> Tuple[Optional[str], Optional[str]]:
     log(f"→ Compiling {yaml_name} via docker in '{container}'")
     rc = docker_exec(container, ["esphome","compile",f"/config/esphome/{yaml_name}"])
@@ -217,11 +266,7 @@ def compile_in_esphome_container(container: str, yaml_name: str, device_name: st
 
 def upload_via_esphome(container: str, yaml_name: str, target: str) -> bool:
     log(f"→ Uploading via ESPHome: {yaml_name} → {target}")
-    # NOTE: do NOT append unsupported flags (e.g. --no-logs). Keep CLI minimal & compatible.
-    rc, out, err = docker_exec_out(
-        container,
-        ["esphome","upload",f"/config/esphome/{yaml_name}","--device",target]
-    )
+    rc, out, err = docker_exec_out(container, ["esphome","upload",f"/config/esphome/{yaml_name}","--device",target])
     if rc == 0:
         log("→ OTA upload reported success.")
         return True
@@ -229,11 +274,10 @@ def upload_via_esphome(container: str, yaml_name: str, target: str) -> bool:
     tail = tail_src[-30:] if tail_src else []
     if tail:
         log("OTA uploader output (tail):")
-        for line in tail:
-            log(f"  {line}")
+        for line in tail: log(f"  {line}")
     return False
 
-# -------- discovery --------
+# ---------- Discovery ----------
 def discover_devices() -> List[dict]:
     esphome_dir = Path("/config/esphome")
     return [{"name": y.stem, "config": y.name} for y in sorted(esphome_dir.glob("*.yaml"))]
@@ -241,7 +285,7 @@ def discover_devices() -> List[dict]:
 def read_versions(_, __) -> Tuple[str,str]:
     return ("unknown","unknown")
 
-# -------- main --------
+# ---------- Main ----------
 def main():
     opts = load_options()
     progress = load_progress()
@@ -317,6 +361,8 @@ def main():
 
         ok = upload_via_esphome(esphome_container, yaml_name, target)
         if ok:
+            detected = get_esphome_cli_version(esphome_container)
+            write_dashboard_deployed(esphome_container, yaml_name, detected)
             log(f"✓ Successfully updated {name}")
             if name in progress["failed"]:
                 progress["failed"] = [x for x in progress["failed"] if x != name]
