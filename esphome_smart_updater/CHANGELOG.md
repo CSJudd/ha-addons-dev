@@ -133,4 +133,19 @@ in the add-on logs after start.
 - Updated `config.json` to include extended mappings and full access.
 - Incremented version to `1.2.32` for Supervisor rebuild trigger.
 
----
+# ---------------------------------------------------------------------------------------------
+##  [1.2.33] - 2025-10-30
+### Fixed
+- Documented and enforced requirement to run with **Protection mode OFF** for Docker API access; Supervisor blocks `/run/docker.sock` when Protection mode is ON.
+- Startup script now emits explicit hint when socket is missing due to Protection mode.
+### Changed
+- Kept `docker_api: true` + `hassio_role: "manager"`; removed need for `full_access`.
+
+
+# ---------------------------------------------------------------------------------------------
+##  [1.2.34] - 2025-10-30
+
+### Fixed
+- Updated firmware path for ESPHome ≥ 2025.9 (moved from `.esphome/build/...` to `build/...`)
+- Prevented false "Could not copy binary" errors during compilation step
+- Added fallback detection for legacy path to maintain compatibility with older ESPHome add-ons
