@@ -89,3 +89,12 @@ Changed
 Fixed
 - Robust stop handling: kill entire compiler process group on stop to prevent continued runs after
   the add-on is stopped; persist progress immediately.
+
+
+# ---------------------------------------------------------------------------------------------
+##   [1.2.1] - 2025-10-30
+Fixed
+- Ensured Supervisor mounts Docker socket by declaring `"docker_api": true`.
+- Disabled automatic restart loop during failures with `"watchdog": false"` to simplify testing.
+Notes
+- Rebuild/reinstall is required after changing add-on capabilities so the socket bind is applied.
