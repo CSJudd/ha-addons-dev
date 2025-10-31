@@ -422,16 +422,17 @@ action:
 
 ---
 
-## 🤝 Contributing to ESPHome
+## Feature Request to ESPHome
 
-**This add-on is a workaround for a missing ESPHome feature.**
+I've submitted a feature request to make this functionality native 
+to ESPHome Dashboard:
 
-I've opened a feature request with ESPHome to add native "Smart Update All" functionality to the dashboard. If you'd like to see this become an official feature:
+https://github.com/orgs/esphome/discussions/3382
 
-1. **Star the ESPHome GitHub repository**
-2. **Comment on the feature request** (link in issues)
-3. **Share your use case** (how many devices, why you need this)
+If you'd like to see this become an official ESPHome feature, 
+please 👍 the discussion and share your use case!
 
+Until then, this add-on provides the functionality you need today.
 If ESPHome adds a compile API, I'll refactor this add-on to use it and make Protection Mode unnecessary.
 
 ---
@@ -508,6 +509,7 @@ Built out of necessity to manage 375+ ESPHome devices efficiently.
 - **ESPHome:** https://esphome.io
 - **Home Assistant:** https://www.home-assistant.io
 - **Issues:** https://github.com/CSJudd/ha-addons-dev/issues
+- **Feature Request:** https://github.com/orgs/esphome/discussions/3382
 
 ---
 
