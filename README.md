@@ -4,7 +4,7 @@
 
 ## Add-ons in this repository
 
-- **ESPHome Smart Updater (Beta)** - Testing latest features
+- **ESPHome Selective Updates (Beta)** - Development and Testing latest features
 
 ## Installation
 
