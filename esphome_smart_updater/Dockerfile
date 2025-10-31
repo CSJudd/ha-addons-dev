@@ -1,40 +1,47 @@
-# syntax=docker/dockerfile:1
+# ============================================================================
+# ESPHome Selective Updates - Dockerfile
+# ============================================================================
+# This add-on uses Docker exec to compile firmware inside the official
+# ESPHome add-on container, avoiding toolchain compatibility issues.
+# ============================================================================
 
-###############################################################################
-# Home Assistant Add-on: ESPHome Smart Updater
-# Purpose: Safely compiles and updates ESPHome devices using the official
-#          ESPHome container via Docker exec. Requires docker_api=true.
-###############################################################################
-
-# Always include a default BUILD_FROM, otherwise Supervisor won't mount /run/docker.sock
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19
 FROM ${BUILD_FROM}
 
-# ← NEW: accept the version the Supervisor passes (see logs: --build-arg BUILD_VERSION=...)
-ARG BUILD_VERSION
-# ← NEW: make it available at runtime for version-change housekeeping
-ENV ADDON_VERSION=${BUILD_VERSION:-unknown}
+# ============================================================================
+# Install Dependencies
+# ============================================================================
 
-# Keep consistent shell and fail fast on any errors
-SHELL ["/bin/ash", "-o", "pipefail", "-c"]
-
-# Install runtime dependencies
 RUN apk add --no-cache \
-      python3 \
-      py3-requests \
-      docker-cli \
-      iputils \
-      curl \
-      jq
+    python3 \
+    py3-requests \
+    docker-cli \
+    bash \
+    iputils
 
-# Environment and working directory setup
-ENV PYTHONUNBUFFERED=1
-WORKDIR /app
+# ============================================================================
+# Copy Add-on Files
+# ============================================================================
 
-# Copy main scripts
+COPY run.sh /app/run.sh
 COPY esphome_smart_updater.py /app/esphome_smart_updater.py
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
 
-# Entry point
-CMD ["/run.sh"]
+# ============================================================================
+# Set Permissions
+# ============================================================================
+
+RUN chmod +x /app/run.sh && \
+    chmod +x /app/esphome_smart_updater.py
+
+# ============================================================================
+# Set Environment Variables
+# ============================================================================
+
+ENV LANG=C.UTF-8
+ENV ADDON_VERSION=2.0.0
+
+# ============================================================================
+# Entry Point
+# ============================================================================
+
+CMD ["/app/run.sh"]

@@ -2,178 +2,267 @@
 
 All notable changes to this project will be documented in this file.
 
-# ---------------------------------------------------------------------------------------------
-## [1.0.0] - 2025-10-25
-# -- Added
-- Initial release of ESPHome Smart Updater add-on
-- Smart update logic: only updates devices where deployed_version ≠ current_version
-- Offline device detection via ping
-- Resume capability with progress tracking
-- Comprehensive logging to `/config/esphome_smart_update.log`
-- Configurable options for OTA password, offline handling, and update delays
-- Support for all ESPHome device types
-- Handles 375+ devices efficiently
-- Integration with Home Assistant automations and scripts
-- Multi-architecture support (armhf, armv7, aarch64, amd64, i386)
+---
 
-# -- Features
-- HTTP OTA updates for all ESPHome devices
-- Compilation inside ESPHome container
-- Progress file for interrupted update recovery
-- Detailed statistics reporting
-- Configurable delay between updates
-- Skip offline devices option
+## [2.0.0] - 2025-10-30
 
+### Major Rewrite - Production Ready Release
 
-# ---------------------------------------------------------------------------------------------
-## [1.0.1] - 2025-10-26
- - installs the Docker client in the add-on,
- - binds to the Supervisor’s socket at /run/docker.sock,
- - exports DOCKER_HOST=unix:///run/docker.sock,
- - adds a configurable ESPHome container name (defaults to the official add-on container: addon_15ef4d2f_esphome),
- - keeps everything else you described (logging, resume, skip offline, delay).
+This version represents a complete rewrite focused on safety, usability, and transparency about the Protection Mode requirement.
 
-
-# ---------------------------------------------------------------------------------------------
-## [1.0.2] - 2025-10-26
-Fixed
-- Resolve build failure on Alpine 3.19 due to PEP 668 by replacing pip install with APK package (py3-requests).
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.0.3] - 2025-10-26
-Fixed
-- Robust Docker socket detection: supports both /run/docker.sock and /var/run/docker.sock.
-- Removed hardcoded DOCKER_HOST from config; now set dynamically in entrypoint.
-- Keeps Alpine-only Python deps (py3-requests) to avoid PEP 668 issues.
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.0.4] - 2025-10-26
-Changed
-- New compile strategy with automatic fallback:
-  - If Docker socket + ESPHome container available: compile via `docker exec`.
-  - Otherwise: compile locally inside add-on via a persistent venv at /data/venv (no Docker required).
-- `docker_api` is now optional. Set `compile_mode` to control behavior: auto | docker | builtin.
-- Zero hard-coded socket paths; no more startup crashes if Docker socket is absent.
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.1.0] - 2025-10-26
-Fixed
-- Replace unavailable Alpine package `python3-venv` with `py3-virtualenv` and `py3-pip`.
-- Venv creation now uses `python3 -m virtualenv /data/venv`, ensuring pip is available inside venv.
-- Keeps docker-exec path optional; builtin compiler is default and resilient.
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.1.1] - 2025-10-26
-Fixed
-- Corrected ESPHome CLI invocation order (`esphome compile <file>`) which previously caused
-  "invalid choice" errors during built-in compilation.
-- Implemented full graceful stop handling:
-  - Add-on now traps SIGTERM/SIGINT events from Home Assistant.
-  - Any running compile subprocess is terminated cleanly.
-  - Progress is saved immediately, preventing restarts from repeating completed devices.
-  - Prevents the add-on from continuing updates after being stopped.
-- Maintains all prior functionality and resume logic for both Docker and built-in compile modes.
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.2.0] - 2025-10-30
-Changed
-- Switched to Docker-exec-only compilation (inside official ESPHome add-on) because ESPHome
-  PlatformIO toolchains for ESP8266/ESP32 require glibc and do not run on Alpine (musl).
-- Removed builtin/venv compiler path to avoid toolchain failures ("xtensa-lx106-elf-g++: not found").
-- Add-on now requires Supervisor Docker socket (`docker_api: true`) and validates container name.
-Fixed
-- Robust stop handling: kill entire compiler process group on stop to prevent continued runs after
-  the add-on is stopped; persist progress immediately.
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.2.1] - 2025-10-30
-Fixed
-- Ensured Supervisor mounts Docker socket by declaring `"docker_api": true`.
-- Disabled automatic restart loop during failures with `"watchdog": false"` to simplify testing.
-Notes
-- Rebuild/reinstall is required after changing add-on capabilities so the socket bind is applied.
-
-
-# ---------------------------------------------------------------------------------------------
-## [1.2.31] - 2025-10-30
-
-### Fixed
-- **Critical fix:** Restored Supervisor Docker socket mount by adding a default `BUILD_FROM` value in `Dockerfile`
-  - Previous builds lacked a valid base image, preventing `/run/docker.sock` from being passed into the container
-  - Root cause: `ARG BUILD_FROM` was declared without a fallback, causing Supervisor to treat the image as untrusted
-- Ensured `hassio_role: "manager"` and `docker_api: true` are honored consistently
-- Verified `Dockerfile` now builds from `ghcr.io/home-assistant/amd64-base:3.19` to comply with Supervisor security model
+### Added
+- **Safety Features:**
+  - Comprehensive startup safety checks
+  - Clear Protection Mode detection and user messaging
+  - Operation boundary documentation
+  - Docker socket verification
+  - ESPHome container validation
+  
+- **Control Features:**
+  - `dry_run` mode - Preview updates without executing
+  - `max_devices_per_run` - Limit batch size
+  - `start_from_device` - Manual resume point
+  - `update_only_these` - Whitelist specific devices
+  
+- **Logging Improvements:**
+  - Structured logging with clear sections
+  - Better progress indicators
+  - Safety check results
+  - Operation summaries
+  - More descriptive error messages
 
 ### Changed
-- Updated `Dockerfile` comments and structure for clarity and HA compliance
-- Incremented add-on version to `1.2.31` for repository and Supervisor rebuild triggering
+- **Renamed add-on** from "ESPHome Smart Updater" to "ESPHome Selective Updates"
+- **Complete README rewrite:**
+  - Honest explanation of Protection Mode requirement
+  - Clear target audience definition
+  - Safety assurances with technical details
+  - Better documentation structure
+  - Real-world use case examples
+  
+- **Improved error handling:**
+  - Graceful failures with actionable messages
+  - Better Docker socket detection
+  - Clear instructions when things go wrong
+  
+- **Better startup script:**
+  - Step-by-step validation
+  - Clear error messages with solutions
+  - Pre-flight summary
 
-### Notes
-This version **enables Docker exec functionality** correctly.  
-You should now see:
-[INFO] Using Docker socket at: /run/docker.sock
-in the add-on logs after start.
+### Fixed
+- Improved signal handling for SIGTERM/SIGINT
+- Better progress file management
+- More robust version detection
+- Cleaner housekeeping logic
 
-# ---------------------------------------------------------------------------------------------
+### Documentation
+- Added comprehensive troubleshooting guide
+- Added advanced use case examples
+- Added clear installation instructions
+- Added feature request information for ESPHome
+- Added safety explanation and audit guidelines
+
+### Breaking Changes
+- Configuration schema updated (new options added)
+- Slug changed from `esphome_smart_updater` to `esphome_selective_updates`
+- Requires reinstallation if upgrading from 1.x
+
+---
+
+## [1.2.42] - 2025-10-30
+
+### Fixed
+- Updated firmware path for ESPHome ≥ 2025.9
+- Prevented false "Could not copy binary" errors
+- Added fallback for legacy ESPHome path structure
+
+### Added
+- Housekeeping options for log and progress management
+
+---
+
+## [1.2.39] - 2025-10-30
+
+### Fixed
+- Dashboard metadata update after successful OTA
+- ESPHome UI now clears "Update needed" badge correctly
+
+---
+
+## [1.2.38] - 2025-10-30
+
+### Fixed
+- Removed unsupported `--no-logs` flag from ESPHome upload command
+- Improved OTA failure diagnostics
+
+---
+
+## [1.2.34] - 2025-10-30
+
+### Fixed
+- Documented Protection Mode requirement clearly
+- Added explicit startup hint when socket missing
+- Improved user guidance
+
+---
+
+## [1.2.33] - 2025-10-30
+
+### Fixed
+- Enforced Protection Mode OFF requirement
+- Added clear error messages about Protection Mode
+- Removed unnecessary `full_access` flag
+
+---
+
 ## [1.2.32] - 2025-10-30
 
 ### Fixed
-- **Forced Supervisor to mount Docker socket** by adding `"full_access": true` for diagnostic builds.
-- Confirms Supervisor privilege issue was preventing socket visibility despite `"docker_api": true` and `"hassio_role": "manager"`.
-- Retained automatic socket path detection (`/run/docker.sock` or `/var/run/docker.sock`).
-- This version ensures guaranteed Docker access for testing and validation.
+- Added `full_access: true` for diagnostic builds
+- Confirmed socket visibility issue resolution
+
+---
+
+## [1.2.31] - 2025-10-30
+
+### Fixed
+- **Critical:** Restored Supervisor Docker socket mount
+- Added default `BUILD_FROM` value in Dockerfile
+- Fixed base image compliance with Supervisor security model
+- Ensured `hassio_role: "manager"` and `docker_api: true` honored
+
+---
+
+## [1.2.1] - 2025-10-30
+
+### Fixed
+- Ensured Docker socket mount via `docker_api: true`
+- Disabled automatic restart during failures for simpler testing
+
+---
+
+## [1.2.0] - 2025-10-30
 
 ### Changed
-- Updated `config.json` to include extended mappings and full access.
-- Incremented version to `1.2.32` for Supervisor rebuild trigger.
+- **Major:** Switched to Docker-exec-only compilation
+- Removed built-in/venv compiler (Alpine musl incompatibility)
+- Now requires Supervisor Docker socket
 
-# ---------------------------------------------------------------------------------------------
-##  [1.2.33] - 2025-10-30
 ### Fixed
-- Documented and enforced requirement to run with **Protection mode OFF** for Docker API access; Supervisor blocks `/run/docker.sock` when Protection mode is ON.
-- Startup script now emits explicit hint when socket is missing due to Protection mode.
+- Eliminated "xtensa-lx106-elf-g++: not found" errors
+- Robust stop handling with process group termination
+
+---
+
+## [1.1.1] - 2025-10-26
+
+### Fixed
+- Corrected ESPHome CLI invocation order
+- Implemented full graceful stop handling
+- Progress saved immediately on SIGTERM/SIGINT
+
+---
+
+## [1.1.0] - 2025-10-26
+
+### Fixed
+- Replaced unavailable `python3-venv` with `py3-virtualenv`
+- Fixed venv creation for built-in compiler
+
+---
+
+## [1.0.4] - 2025-10-26
+
 ### Changed
-- Kept `docker_api: true` + `hassio_role: "manager"`; removed need for `full_access`.
+- New compile strategy with automatic fallback
+- Added `compile_mode` configuration option
+- Made `docker_api` optional
 
+---
 
-# ---------------------------------------------------------------------------------------------
-##  [1.2.34] - 2025-10-30
+## [1.0.3] - 2025-10-26
 
 ### Fixed
-- Updated firmware path for ESPHome ≥ 2025.9 (moved from `.esphome/build/...` to `build/...`)
-- Prevented false "Could not copy binary" errors during compilation step
-- Added fallback detection for legacy path to maintain compatibility with older ESPHome add-ons
+- Robust Docker socket detection
+- Dynamic `DOCKER_HOST` setting
+- Alpine-only Python dependencies
 
+---
 
-# ---------------------------------------------------------------------------------------------
-##  [1.2.38] - 2025-10-30
+## [1.0.2] - 2025-10-26
+
 ### Fixed
-- Remove unsupported `--no-logs` flag from `esphome upload` CLI invocation that caused OTA to fail immediately on ESPHome 2025.10.x.
-- Improve uploader failure diagnostics by logging the last lines of stdout/stderr.
+- Resolved PEP 668 build failure on Alpine 3.19
+- Replaced pip with APK package management
 
+---
 
-# ---------------------------------------------------------------------------------------------
-##  [1.2.39] - 2025-10-30
-### Fixed
-- After successful OTA, update ESPHome Dashboard metadata (`dashboard.json`) so the UI clears the “Update needed” badge.
-- Write `deployed_version` to match `current_version` for the updated YAML entry in both the ESPHome container and the host mirror.
+## [1.0.1] - 2025-10-26
 
-
-# ---------------------------------------------------------------------------------------------
-##  [1.2.34] - 2025-10-30
 ### Added
-- New housekeeping options:
-  - clear_log_on_start
-  - clear_log_on_version_change
-  - clear_log_now
-  - clear_progress_on_start
-  - clear_progress_now
-- Detect add-on version via ENV `ADDON_VERSION` and clear log on version change (optional).
-### Fixed
-- Startup order ensures housekeeping executes before any device work.
+- Docker client installation
+- Supervisor socket binding
+- Configurable ESPHome container name
+
+---
+
+## [1.0.0] - 2025-10-25
+
+### Added
+- Initial release
+- Smart update logic (only update when needed)
+- Offline device detection
+- Resume capability
+- Comprehensive logging
+- Multi-architecture support
+- HTTP OTA updates
+- Progress tracking
+
+---
+
+## Version Numbering
+
+- **Major (X.0.0):** Breaking changes, architecture changes
+- **Minor (1.X.0):** New features, significant improvements
+- **Patch (1.0.X):** Bug fixes, minor improvements
+
+---
+
+## Upgrade Guide
+
+### From 1.x to 2.0
+
+1. **Backup your configuration** (copy options to a text file)
+2. **Uninstall the old version**
+3. **Reinstall from repository** (new slug)
+4. **Restore configuration**
+5. **Ensure Protection Mode is OFF**
+6. **Test with `dry_run: true` first**
+
+The add-on slug has changed, so this requires a fresh installation.
+
+---
+
+## Future Plans
+
+### Planned Features (2.1.x)
+- [ ] Parallel compilation support
+- [ ] Better progress UI integration
+- [ ] Email/notification support
+- [ ] Compile queue management
+- [ ] Per-device update scheduling
+
+### Waiting on ESPHome
+- [ ] Native HTTP compile API (requested from ESPHome team)
+- [ ] Protection Mode compatibility (requires API changes)
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+**Note:** Versions prior to 2.0.0 are considered beta. Version 2.0.0 is the first production-ready release.
