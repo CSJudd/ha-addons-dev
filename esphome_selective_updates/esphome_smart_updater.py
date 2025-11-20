@@ -1,709 +1,222 @@
 #!/usr/bin/env python3
 """
-ESPHome Selective Updates - Smart bulk updates for ESPHome devices
-
-This add-on fixes ESPHome Dashboard's "Update All" button by adding:
-- Smart updates (only devices that need updating)
-- Resume capability (continues from where it left off)
-- Offline detection (skips unreachable devices)
-- Progress tracking (detailed logging)
-
-Author: Chris Judd
-License: MIT
+ESPHome Selective Updates Add-on
+Intelligently updates ESPHome devices based on version changes
 """
 
-import json
-import os
-import re
-import signal
-import subprocess
 import sys
+import os
+import json
+import subprocess
 import time
-from datetime import datetime
+import re
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Set, Tuple
 
 # ============================================================================
-# CONFIGURATION PATHS
+# PATHS & CONSTANTS
 # ============================================================================
 
-ADDON_OPTIONS_PATH = Path("/data/options.json")
-STATE_PATH         = Path("/data/state.json")
-LOG_FILE           = Path("/config/esphome_smart_update.log")
-PROGRESS_FILE      = Path("/config/esphome_update_progress.json")
-ESPHOME_CONFIG_DIR = Path("/config/esphome")
-DASHBOARD_JSON     = ESPHOME_CONFIG_DIR / ".dashboard.json"
+CONFIG_DIR = Path("/config")
+ESPHOME_DIR = CONFIG_DIR / "esphome"
+STATE_FILE = CONFIG_DIR / "esphome_smart_update_state.json"
+PROGRESS_FILE = CONFIG_DIR / "esphome_smart_update_progress.json"
+LOG_FILE = CONFIG_DIR / "esphome_smart_update.log"
 
 DEFAULTS = {
-    "ota_password": "",
-    "skip_offline": True,
-    "delay_between_updates": 3,
-    "esphome_container": "addon_15ef4d2f_esphome",
-    "dry_run": False,
-    "max_devices_per_run": 0,
-    "start_from_device": "",
-    "update_only_these": [],
-    "clear_log_now": False,
+    "device_name_patterns": [],
+    "skip_device_name_patterns": [],
+    "yaml_name_patterns": [],
+    "skip_yaml_name_patterns": [],
+    "update_when_no_deployed_version": False,
+    "update_when_version_matches": False,
+    "clear_progress_on_start": False,
     "clear_progress_now": False,
     "clear_log_on_start": False,
-    "clear_progress_on_start": False,
-    "always_clear_log_on_version_change": True,
+    "clear_log_on_version_change": True,
+    "clear_log_now": False,
+    "stop_on_compilation_warning": False,
+    "stop_on_compilation_error": True,
+    "stop_on_upload_error": True,
+    "dry_run": False,
+    "log_level": "normal",
 }
 
-# ============================================================================
-# GLOBAL STATE
-# ============================================================================
-
-STOP_REQUESTED = False
-CURRENT_CHILD: Optional[subprocess.Popen] = None
+# Log level mapping
+LOG_LEVEL_MAP = {
+    "quiet": 0,
+    "normal": 1,
+    "verbose": 2,
+    "debug": 3
+}
+CURRENT_LOG_LEVEL = 1  # Default to normal
 
 # ============================================================================
 # LOGGING UTILITIES
 # ============================================================================
 
 def ts() -> str:
-    """Return formatted timestamp"""
-    return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+    """Generate timestamp for logging"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-def log(msg: str):
+def set_log_level(level: str):
+    """Set the current log level"""
+    global CURRENT_LOG_LEVEL
+    CURRENT_LOG_LEVEL = LOG_LEVEL_MAP.get(level.lower(), 1)
+
+def should_log(level: str = "normal") -> bool:
+    """Check if message should be logged at current level"""
+    msg_level = LOG_LEVEL_MAP.get(level.lower(), 1)
+    return msg_level <= CURRENT_LOG_LEVEL
+
+def log(msg: str, level: str = "normal"):
     """Log message to both stdout and file"""
     line = f"{ts()} {msg}"
-    print(line, flush=True)
+    
+    # Always log to file (full history)
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
         pass
-
-def log_header(title: str):
-    """Log a section header"""
-    log("=" * 79)
-    log(title)
-    log("=" * 79)
-
-def log_section(title: str):
-    """Log a subsection header"""
-    log("")
-    log(f"--- {title} ---")
-
-def truncate_file(path: Path):
-    """Clear a file's contents"""
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8"):
-            pass
-    except Exception as e:
-        log(f"Warning: failed to truncate {path}: {e}")
-
-# ============================================================================
-# SIGNAL HANDLING
-# ============================================================================
-
-def _sig_handler(signum, frame):
-    """Handle SIGTERM/SIGINT for graceful shutdown"""
-    global STOP_REQUESTED, CURRENT_CHILD
-    STOP_REQUESTED = True
-    log("")
-    log("⚠ Stop signal received - shutting down gracefully...")
     
-    if CURRENT_CHILD and CURRENT_CHILD.poll() is None:
-        try:
-            os.killpg(os.getpgid(CURRENT_CHILD.pid), signal.SIGTERM)
-        except Exception:
-            try:
-                CURRENT_CHILD.terminate()
-            except Exception:
-                pass
+    # Only log to stdout if level permits
+    if should_log(level):
+        print(line, flush=True)
 
-signal.signal(signal.SIGTERM, _sig_handler)
-signal.signal(signal.SIGINT, _sig_handler)
+def log_quiet(msg: str):
+    """Log message at quiet level (always shown)"""
+    log(msg, level="quiet")
 
-# ============================================================================
-# JSON UTILITIES
-# ============================================================================
+def log_normal(msg: str):
+    """Log message at normal level"""
+    log(msg, level="normal")
 
-def load_json(path: Path, default):
-    """Load JSON file with fallback"""
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return default
-    return default
+def log_verbose(msg: str):
+    """Log message at verbose level"""
+    log(msg, level="verbose")
 
-def save_json(path: Path, data: dict):
-    """Save data as JSON"""
+def log_debug(msg: str):
+    """Log message at debug level"""
+    log(msg, level="debug")
+
+def log_header(msg: str):
+    """Log a section header (always shown)"""
+    log_quiet("")
+    log_quiet("=" * 70)
+    log_quiet(msg)
+    log_quiet("=" * 70)
+
+def truncate_file(path: Path) -> bool:
+    """
+    Clear a file's contents
+    Returns: True if successful, False otherwise
+    """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        with path.open("w", encoding="utf-8") as f:
+            pass
+        return True
     except Exception as e:
-        log(f"Warning: failed to write {path}: {e}")
+        print(f"ERROR: Failed to truncate {path}: {e}", file=sys.stderr)
+        return False
+
+# ============================================================================
+# CONFIGURATION & STATE MANAGEMENT
+# ============================================================================
 
 def load_options() -> Dict:
-    """Load add-on options with defaults"""
-    opts = DEFAULTS.copy()
-    if ADDON_OPTIONS_PATH.exists():
-        try:
-            loaded = json.loads(ADDON_OPTIONS_PATH.read_text(encoding="utf-8"))
-            for k in DEFAULTS:
-                if k in loaded:
-                    opts[k] = loaded[k]
-        except Exception as e:
-            log(f"Warning: options.json parse error: {e}")
-    return opts
+    """Load add-on configuration from /data/options.json"""
+    options_path = Path("/data/options.json")
+    try:
+        with options_path.open("r", encoding="utf-8") as f:
+            opts = json.load(f)
+        # Merge with defaults
+        result = DEFAULTS.copy()
+        result.update(opts)
+        return result
+    except Exception as e:
+        log_quiet(f"Warning: failed to load options: {e}")
+        return DEFAULTS.copy()
 
 def load_state() -> Dict:
     """Load persistent state"""
-    return load_json(STATE_PATH, {
-        "last_version": None,
-        "clear_log_now_consumed": False,
-        "clear_progress_now_consumed": False
-    })
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        with STATE_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 def save_state(state: Dict):
     """Save persistent state"""
-    save_json(STATE_PATH, state)
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with STATE_FILE.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        log_quiet(f"Warning: failed to save state: {e}")
 
 def load_progress() -> Dict:
-    """Load update progress"""
-    return load_json(PROGRESS_FILE, {
-        "done": [],
-        "failed": [],
-        "skipped": []
-    })
-
-def save_progress(data: dict):
-    """Save update progress"""
-    save_json(PROGRESS_FILE, data)
-
-# ============================================================================
-# NETWORK UTILITIES
-# ============================================================================
-
-def ping_host(host: str) -> bool:
-    """Check if host is reachable via ping"""
-    for args in (["-c", "1", "-w", "1"], ["-c", "1", "-W", "1"]):
-        try:
-            rc = subprocess.run(
-                ["ping"] + args + [host],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=3
-            ).returncode
-            if rc == 0:
-                return True
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return True
-        except Exception:
-            pass
-    return False
-
-# ============================================================================
-# ESPHOME YAML PARSING
-# ============================================================================
-
-ESPHOME_NAME_RE = re.compile(r"^esphome:\s*$", re.MULTILINE)
-NAME_LINE_RE    = re.compile(r"^\s+name\s*:\s*(\S+)\s*$")
-
-def parse_node_name(yaml_text: str) -> Optional[str]:
-    """Extract ESPHome device name from YAML config"""
-    # Find 'esphome:' block
-    m = ESPHOME_NAME_RE.search(yaml_text)
-    if not m:
-        # Fallback: look for top-level 'name:'
-        m2 = re.search(r"^\s*name\s*:\s*([^\s#]+)", yaml_text, re.MULTILINE)
-        return m2.group(1).strip() if m2 else None
-    
-    start = m.end()
-    # Extract indented lines following 'esphome:'
-    block = []
-    for line in yaml_text[start:].splitlines():
-        if line.strip() == "":
-            block.append(line)
-            continue
-        if not line.startswith(" "):
-            break  # Next top-level section
-        block.append(line)
-    
-    # Find 'name:' within the block
-    for line in block:
-        m2 = NAME_LINE_RE.match(line)
-        if m2:
-            return m2.group(1).strip()
-    
-    return None
-
-# ============================================================================
-# DEVICE DISCOVERY
-# ============================================================================
-
-def discover_devices() -> List[dict]:
-    """Discover all ESPHome device configurations"""
-    out = []
-    
-    if not ESPHOME_CONFIG_DIR.exists():
-        log(f"ERROR: ESPHome config directory not found: {ESPHOME_CONFIG_DIR}")
-        return out
-    
-    for yaml_file in sorted(ESPHOME_CONFIG_DIR.glob("*.yaml")):
-        try:
-            text = yaml_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            text = ""
-        
-        # Extract IP address - try multiple strategies
-        ip = None
-        
-        # Strategy 1: Substitution variable (device_static_ip: "10.128.88.123")
-        # This handles the common pattern where IPs are defined in substitutions
-        m_sub = re.search(r"device_static_ip\s*:\s*['\"]?([0-9]{1,3}(?:\.[0-9]{1,3}){3})['\"]?", text)
-        if m_sub:
-            ip = m_sub.group(1).strip()
-        
-        # Strategy 2: Direct inline manual_ip (manual_ip: 192.168.1.100)
-        if not ip:
-            m_inline = re.search(r"manual_ip\s*:\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})", text)
-            if m_inline:
-                ip = m_inline.group(1).strip()
-        
-        # Strategy 3: static_ip under manual_ip block (multi-line YAML)
-        if not ip:
-            m_static = re.search(r"static_ip\s*:\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})", text)
-            if m_static:
-                ip = m_static.group(1).strip()
-        
-        # Strategy 4: Look for any substitution that might contain an IP
-        # Matches patterns like: my_ip: "10.0.0.1" or device_ip: 192.168.1.1
-        if not ip:
-            m_any_sub = re.search(r"(?:ip|address)\s*:\s*['\"]?([0-9]{1,3}(?:\.[0-9]{1,3}){3})['\"]?", text, re.IGNORECASE)
-            if m_any_sub:
-                ip = m_any_sub.group(1).strip()
-        
-        # If no IP found, will fall back to mDNS in update logic
-        
-        # Extract node name
-        node = parse_node_name(text) or yaml_file.stem
-        
-        out.append({
-            "name": yaml_file.stem,
-            "node": node,
-            "config": yaml_file.name,
-            "address": ip,  # Can be None - will use mDNS fallback
-        })
-    
-    return out
-
-# ============================================================================
-# DOCKER OPERATIONS
-# ============================================================================
-
-def _run(
-    cmd: list[str],
-    env: Optional[dict] = None,
-    capture: bool = False,
-    text_out: bool = True
-) -> Tuple[int, str]:
-    """Run subprocess with stop handling"""
-    global CURRENT_CHILD
-    
-    if STOP_REQUESTED:
-        return (143, "")
-    
-    out = ""  # Initialize out variable
-    
+    """Load progress tracking"""
+    if not PROGRESS_FILE.exists():
+        return {"done": [], "failed": [], "skipped": []}
     try:
-        if capture:
-            p = subprocess.Popen(
-                cmd,
-                env=env,
-                preexec_fn=os.setsid,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=text_out
-            )
-        else:
-            p = subprocess.Popen(
-                cmd,
-                env=env,
-                preexec_fn=os.setsid
-            )
-        
-        CURRENT_CHILD = p
-        
-        if capture:
-            out = p.communicate()[0] or ""
-            rc = p.returncode
-        else:
-            rc = p.wait()
-        
-        return (rc, out)
-    finally:
-        CURRENT_CHILD = None
-
-def docker_exec(
-    container: str,
-    args: list[str],
-    capture: bool = False
-) -> Tuple[int, str]:
-    """Execute command inside Docker container"""
-    return _run(
-        ["docker", "exec", container] + args,
-        os.environ.copy(),
-        capture=capture
-    )
-
-def docker_cp(src_container: str, src_path: str, dst_path: str) -> int:
-    """Copy file from Docker container to host"""
-    rc, _ = _run(
-        ["docker", "cp", f"{src_container}:{src_path}", dst_path],
-        os.environ.copy(),
-        capture=False
-    )
-    return rc
-
-def container_exists(container: str) -> bool:
-    """Check if Docker container exists"""
-    try:
-        result = subprocess.run(
-            ["docker", "inspect", container],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5
-        )
-        return result.returncode == 0
+        with PROGRESS_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        return False
+        return {"done": [], "failed": [], "skipped": []}
 
-def get_current_esphome_version(container: str) -> str:
-    """Get ESPHome version from container"""
-    rc, out = docker_exec(container, ["esphome", "version"], capture=True)
-    if rc == 0:
-        m = re.search(r"ESPHome\s+([0-9][^\s]*)", out)
-        if m:
-            return m.group(1).strip()
-    return "unknown"
-
-# ============================================================================
-# VERSION TRACKING
-# ============================================================================
-
-def read_dashboard_versions(device_name: str) -> Tuple[Optional[str], Optional[str]]:
-    """Read deployed and current versions from ESPHome dashboard.json"""
-    if not DASHBOARD_JSON.exists():
-        return (None, None)
-    
+def save_progress(progress: Dict):
+    """Save progress tracking"""
     try:
-        dashboard = json.loads(DASHBOARD_JSON.read_text(encoding="utf-8"))
-        device_info = dashboard.get(device_name, {})
-        deployed = device_info.get("deployed_version")
-        current = device_info.get("current_version")
-        return (deployed, current)
-    except Exception:
-        return (None, None)
-
-def needs_update(device_name: str, progress: Dict) -> Tuple[bool, str]:
-    """
-    Determine if device needs update
-    Returns: (needs_update, reason)
-    """
-    # Already done this run
-    if device_name in progress.get("done", []):
-        return (False, "already updated this run")
-    
-    # Read versions from dashboard
-    deployed, current = read_dashboard_versions(device_name)
-    
-    if deployed is None or current is None:
-        return (True, "version information unavailable")
-    
-    if deployed != current:
-        return (True, f"deployed={deployed}, current={current}")
-    
-    return (False, f"already up-to-date ({deployed})")
-
-# ============================================================================
-# COMPILATION
-# ============================================================================
-
-def compile_in_esphome_container(
-    container: str,
-    yaml_name: str,
-    device_name: str
-) -> Optional[str]:
-    """
-    Compile firmware in ESPHome container
-    Returns: Path to compiled binary on host, or None if failed
-    """
-    log(f"→ Compiling {yaml_name} via Docker in '{container}'")
-    
-    rc, _ = docker_exec(
-        container,
-        ["esphome", "compile", f"/config/esphome/{yaml_name}"],
-        capture=False
-    )
-    
-    if rc != 0 or STOP_REQUESTED:
-        if STOP_REQUESTED:
-            log("Stop requested; aborting compile.")
-        else:
-            log(f"✗ Compilation failed for {device_name}")
-        return None
-    
-    # Locate compiled binary
-    stem = Path(yaml_name).stem
-    pio_bin = f"/data/build/{stem}*/.pioenvs/{stem}*/firmware.bin"
-    legacy = f"/config/esphome/.esphome/build/{stem}/{stem}.bin"
-    
-    dst_dir = Path("/config/esphome/builds")
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    dst = str(dst_dir / f"{stem}.bin")
-    
-    # Try new PlatformIO path structure
-    rc, out = docker_exec(
-        container,
-        ["sh", "-lc", f"set -e; ls -1 {pio_bin} 2>/dev/null | head -n1"],
-        capture=True
-    )
-    
-    if rc == 0 and out.strip():
-        src = out.strip().splitlines()[0].strip()
-        if docker_cp(container, src, dst) == 0:
-            log(f"→ Binary copied to {dst} (from {src})")
-            return dst
-    
-    # Fallback to legacy path
-    if docker_cp(container, legacy, dst) == 0:
-        log(f"→ Binary copied to {dst} (from {legacy})")
-        return dst
-    
-    log(f"✗ Could not locate firmware binary for {device_name}")
-    return None
-
-# ============================================================================
-# OTA UPLOAD
-# ============================================================================
-
-def ota_upload_via_esphome(
-    container: str,
-    yaml_name: str,
-    target: str
-) -> Tuple[bool, str]:
-    """
-    Upload firmware via OTA using ESPHome CLI
-    Returns: (success, output)
-    """
-    args = ["esphome", "upload", f"/config/esphome/{yaml_name}", "--device", target]
-    rc, out = docker_exec(container, args, capture=True)
-    
-    success = (
-        rc == 0 or
-        "OTA successful" in out or
-        "Successfully uploaded program" in out
-    )
-    
-    return (success, out)
-
-# ============================================================================
-# SAFETY CHECKS
-# ============================================================================
-
-def verify_docker_socket() -> bool:
-    """Verify Docker socket is available"""
-    log_section("Safety Check: Docker Socket")
-    
-    socket_paths = ["/run/docker.sock", "/var/run/docker.sock"]
-    found_socket = None
-    
-    for path in socket_paths:
-        if os.path.exists(path):
-            found_socket = path
-            break
-    
-    if not found_socket:
-        log("")
-        log("✗ FATAL: Docker socket not available")
-        log("")
-        log("CAUSE: Protection Mode is likely ON")
-        log("")
-        log("FIX: Go to add-on Info tab → Toggle 'Protection mode' to OFF")
-        log("")
-        log("WHY: This add-on extends ESPHome's functionality and needs")
-        log("     the same Docker access that ESPHome itself has for")
-        log("     compilation. It only accesses the ESPHome container")
-        log("     and does not interact with your host system.")
-        log("")
-        log("SAFETY: This add-on:")
-        log("  • Only accesses the ESPHome add-on container")
-        log("  • Only reads/writes to /config/esphome/")
-        log("  • Uses the same compilation tools ESPHome uses")
-        log("  • Does not access other containers or host system")
-        log("")
-        return False
-    
-    log(f"✓ Docker socket found: {found_socket}")
-    return True
-
-def verify_docker_cli() -> bool:
-    """Verify docker CLI is available"""
-    try:
-        result = subprocess.run(
-            ["docker", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=5
-        )
-        if result.returncode == 0:
-            version = result.stdout.decode().strip()
-            log(f"✓ Docker CLI available: {version}")
-            return True
+        PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with PROGRESS_FILE.open("w", encoding="utf-8") as f:
+            json.dump(progress, f, indent=2)
     except Exception as e:
-        log(f"✗ Docker CLI not available: {e}")
-    
-    return False
-
-def verify_docker_connection() -> bool:
-    """Verify we can communicate with Docker daemon"""
-    try:
-        result = subprocess.run(
-            ["docker", "ps"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=5
-        )
-        if result.returncode == 0:
-            log("✓ Docker daemon communication OK")
-            return True
-        else:
-            log(f"✗ Cannot communicate with Docker daemon: {result.stderr.decode()}")
-    except Exception as e:
-        log(f"✗ Docker daemon communication failed: {e}")
-    
-    return False
-
-def verify_esphome_container(container: str) -> bool:
-    """Verify ESPHome container exists and is accessible"""
-    log_section("Safety Check: ESPHome Container")
-    
-    if not container_exists(container):
-        log("")
-        log(f"✗ FATAL: ESPHome container '{container}' not found")
-        log("")
-        log("CAUSE: Container name may be incorrect or ESPHome add-on not running")
-        log("")
-        log("FIX: Check your ESPHome add-on:")
-        log("  1. Ensure ESPHome add-on is installed and running")
-        log("  2. Note the exact container name from Supervisor logs")
-        log("  3. Update 'esphome_container' option if different")
-        log("")
-        log("HINT: Common container names:")
-        log("  • addon_15ef4d2f_esphome (official ESPHome add-on)")
-        log("  • addon_a0d7b954_esphome")
-        log("  • addon_5c53de3b_esphome")
-        log("")
-        return False
-    
-    log(f"✓ ESPHome container found: {container}")
-    
-    # Try to get ESPHome version
-    version = get_current_esphome_version(container)
-    if version != "unknown":
-        log(f"✓ ESPHome version: {version}")
-    else:
-        log("⚠ Could not determine ESPHome version")
-    
-    return True
-
-def verify_esphome_config_dir() -> bool:
-    """Verify ESPHome config directory is accessible"""
-    log_section("Safety Check: ESPHome Configuration")
-    
-    if not ESPHOME_CONFIG_DIR.exists():
-        log("")
-        log(f"✗ FATAL: ESPHome config directory not found: {ESPHOME_CONFIG_DIR}")
-        log("")
-        log("CAUSE: ESPHome not configured or config directory missing")
-        log("")
-        log("FIX: Ensure ESPHome add-on is set up with device configurations")
-        log("")
-        return False
-    
-    yaml_count = len(list(ESPHOME_CONFIG_DIR.glob("*.yaml")))
-    log(f"✓ ESPHome config directory accessible")
-    log(f"✓ Found {yaml_count} device configuration(s)")
-    
-    if yaml_count == 0:
-        log("")
-        log("⚠ WARNING: No device configurations found")
-        log("   Add device YAML files to /config/esphome/ first")
-        log("")
-        return False
-    
-    return True
-
-def verify_safe_operation() -> bool:
-    """Run all safety checks"""
-    log_header("Safety Verification")
-    
-    checks = [
-        ("Docker Socket", verify_docker_socket),
-        ("Docker CLI", verify_docker_cli),
-        ("Docker Connection", verify_docker_connection),
-    ]
-    
-    all_passed = True
-    for name, check_func in checks:
-        if not check_func():
-            all_passed = False
-            break
-    
-    return all_passed
-
-# ============================================================================
-# HOUSEKEEPING
-# ============================================================================
+        log_quiet(f"Warning: failed to save progress: {e}")
 
 def perform_housekeeping(opts: Dict, state: Dict, progress: Dict) -> Dict:
     """Handle log and progress file cleanup"""
     addon_version = os.environ.get("ADDON_VERSION", "unknown")
     
     # Version change detection
-    if opts.get("always_clear_log_on_version_change", True):
+    if opts.get("clear_log_on_version_change", True):
         if addon_version and addon_version != state.get("last_version"):
-            truncate_file(LOG_FILE)
-            log(f"Add-on version changed: {state.get('last_version')} → {addon_version}")
-            log("Log file cleared due to version change")
+            if truncate_file(LOG_FILE):
+                log_normal(f"Add-on version changed: {state.get('last_version')} → {addon_version}")
+                log_normal("Log file cleared due to version change")
             state["last_version"] = addon_version
             save_state(state)
     
-    # Clear log on start
+    # Log clearing confirmation (run.sh handles the actual clearing)
     if opts.get("clear_log_on_start", False):
-        truncate_file(LOG_FILE)
-        log("Log file cleared (clear_log_on_start)")
+        log_verbose("Log file was cleared on start")
     
     # Clear log now (one-time trigger)
     if bool(opts.get("clear_log_now", False)) and not state.get("clear_log_now_consumed", False):
-        truncate_file(LOG_FILE)
-        log("Log file cleared (clear_log_now trigger)")
+        log_normal("Log file was cleared (clear_log_now trigger)")
         state["clear_log_now_consumed"] = True
         save_state(state)
     elif not bool(opts.get("clear_log_now", False)) and state.get("clear_log_now_consumed", False):
         state["clear_log_now_consumed"] = False
         save_state(state)
     
-    # Clear progress on start
+    # Progress clearing
     if opts.get("clear_progress_on_start", False):
-        truncate_file(PROGRESS_FILE)
-        progress = {"done": [], "failed": [], "skipped": []}
-        save_progress(progress)
-        log("Progress file cleared (clear_progress_on_start)")
+        if truncate_file(PROGRESS_FILE):
+            progress = {"done": [], "failed": [], "skipped": []}
+            save_progress(progress)
+            log_normal("Progress file cleared (clear_progress_on_start)")
     
-    # Clear progress now (one-time trigger)
     if bool(opts.get("clear_progress_now", False)) and not state.get("clear_progress_now_consumed", False):
-        truncate_file(PROGRESS_FILE)
-        progress = {"done": [], "failed": [], "skipped": []}
-        save_progress(progress)
-        log("Progress file cleared (clear_progress_now trigger)")
+        if truncate_file(PROGRESS_FILE):
+            progress = {"done": [], "failed": [], "skipped": []}
+            save_progress(progress)
+            log_normal("Progress file cleared (clear_progress_now trigger)")
         state["clear_progress_now_consumed"] = True
         save_state(state)
     elif not bool(opts.get("clear_progress_now", False)) and state.get("clear_progress_now_consumed", False):
@@ -713,157 +226,436 @@ def perform_housekeeping(opts: Dict, state: Dict, progress: Dict) -> Dict:
     return progress
 
 # ============================================================================
-# DEVICE FILTERING
+# SAFETY CHECKS
 # ============================================================================
 
-def filter_devices(
-    devices: List[dict],
-    opts: Dict,
-    progress: Dict
-) -> Tuple[List[dict], Dict[str, str]]:
+def verify_safe_operation() -> bool:
+    """Verify the add-on can operate safely"""
+    if not ESPHOME_DIR.exists():
+        log_quiet(f"ERROR: ESPHome directory not found: {ESPHOME_DIR}")
+        return False
+    
+    yaml_files = list(ESPHOME_DIR.glob("*.yaml"))
+    if not yaml_files:
+        log_quiet(f"ERROR: No .yaml files found in {ESPHOME_DIR}")
+        return False
+    
+    log_debug(f"Found {len(yaml_files)} YAML files in {ESPHOME_DIR}")
+    return True
+
+# ============================================================================
+# ESPHOME INTERACTION
+# ============================================================================
+
+def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[int, str, str]:
     """
-    Filter devices based on options
-    Returns: (filtered_devices, skip_reasons)
+    Execute an ESPHome command via docker exec
+    Returns: (returncode, stdout, stderr)
     """
+    # Build the docker exec command
+    cmd = [
+        "docker", "exec", "-i",
+        "addon_5c53de3b_esphome",
+        "esphome"
+    ] + args
+    
+    log_debug(f"Running command: {' '.join(cmd)}")
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=1800  # 30 minute timeout
+        )
+        return (result.returncode, result.stdout, result.stderr)
+    except subprocess.TimeoutExpired:
+        return (124, "", "Command timed out after 30 minutes")
+    except Exception as e:
+        return (1, "", str(e))
+
+def get_esphome_devices() -> List[Dict]:
+    """
+    Get list of ESPHome devices and their current versions
+    Returns list of dicts with keys: name, config_file, current_version, deployed_version
+    """
+    devices = []
+    
+    yaml_files = sorted(ESPHOME_DIR.glob("*.yaml"))
+    log_verbose(f"Scanning {len(yaml_files)} YAML configuration files...")
+    
+    for yaml_path in yaml_files:
+        yaml_name = yaml_path.name
+        
+        # Get device name from YAML
+        device_name = get_device_name_from_yaml(yaml_path)
+        if not device_name:
+            log_debug(f"Skipping {yaml_name}: no device name found")
+            continue
+        
+        # Get current version
+        current_version = get_current_version(yaml_path)
+        
+        # Get deployed version
+        deployed_version = get_deployed_version(yaml_path)
+        
+        devices.append({
+            "name": device_name,
+            "config_file": yaml_name,
+            "current_version": current_version,
+            "deployed_version": deployed_version,
+        })
+        
+        log_debug(f"Device: {device_name} | Config: {yaml_name} | Current: {current_version or 'unknown'} | Deployed: {deployed_version or 'unknown'}")
+    
+    return devices
+
+def get_device_name_from_yaml(yaml_path: Path) -> Optional[str]:
+    """Extract device name from YAML config"""
+    try:
+        with yaml_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("name:") or line.startswith("device_name:"):
+                    # Handle: name: my-device or name: "my-device"
+                    parts = line.split(":", 1)
+                    if len(parts) == 2:
+                        name = parts[1].strip().strip('"').strip("'")
+                        return name
+    except Exception as e:
+        log_debug(f"Error reading {yaml_path.name}: {e}")
+    return None
+
+def get_current_version(yaml_path: Path) -> Optional[str]:
+    """Get current ESPHome version for a config"""
+    returncode, stdout, stderr = run_esphome_command(
+        ["version", str(yaml_path)]
+    )
+    
+    if returncode == 0:
+        # Parse version from output
+        for line in stdout.split("\n"):
+            if "Version:" in line:
+                version = line.split("Version:", 1)[1].strip()
+                return version
+    
+    log_debug(f"Could not determine current version for {yaml_path.name}")
+    return None
+
+def get_deployed_version(yaml_path: Path) -> Optional[str]:
+    """Get deployed version from .storage file"""
+    storage_dir = ESPHOME_DIR / ".storage"
+    device_name = yaml_path.stem
+    storage_file = storage_dir / f"{device_name}.json"
+    
+    if not storage_file.exists():
+        log_debug(f"No storage file for {device_name}")
+        return None
+    
+    try:
+        with storage_file.open("r", encoding="utf-8") as f:
+            storage_data = json.load(f)
+            deployed = storage_data.get("esphome_version")
+            return deployed
+    except Exception as e:
+        log_debug(f"Error reading storage for {device_name}: {e}")
+        return None
+
+def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
+    """
+    Compile ESPHome configuration
+    Returns: (success, error_message)
+    """
+    log_normal(f"  → Compiling {yaml_path.name}...")
+    
+    returncode, stdout, stderr = run_esphome_command(
+        ["compile", str(yaml_path)]
+    )
+    
+    log_debug(f"Compilation return code: {returncode}")
+    if stdout:
+        log_debug(f"Compilation stdout:\n{stdout}")
+    if stderr:
+        log_debug(f"Compilation stderr:\n{stderr}")
+    
+    # Check for warnings
+    combined_output = stdout + stderr
+    if "WARNING" in combined_output.upper():
+        log_verbose("  ⚠ Compilation produced warnings")
+        if opts.get("stop_on_compilation_warning", False):
+            return (False, "Compilation warning (stop_on_compilation_warning enabled)")
+    
+    # Check for errors
+    if returncode != 0:
+        error_msg = "Compilation failed"
+        if stderr:
+            # Extract first meaningful error line
+            for line in stderr.split("\n"):
+                if "ERROR" in line.upper() or "Error" in line:
+                    error_msg = line.strip()
+                    break
+        
+        log_normal(f"  ✗ {error_msg}")
+        
+        if opts.get("stop_on_compilation_error", True):
+            return (False, error_msg)
+    
+    log_verbose("  ✓ Compilation successful")
+    return (True, "")
+
+def upload_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
+    """
+    Upload firmware to device via OTA
+    Returns: (success, error_message)
+    """
+    log_normal(f"  → Uploading to device...")
+    
+    returncode, stdout, stderr = run_esphome_command(
+        ["upload", "--device", "OTA", str(yaml_path)]
+    )
+    
+    log_debug(f"Upload return code: {returncode}")
+    if stdout:
+        log_debug(f"Upload stdout:\n{stdout}")
+    if stderr:
+        log_debug(f"Upload stderr:\n{stderr}")
+    
+    if returncode != 0:
+        error_msg = "Upload failed"
+        combined_output = stdout + stderr
+        
+        # Extract meaningful error
+        if "Connection refused" in combined_output:
+            error_msg = "Connection refused (device offline or wrong IP?)"
+        elif "timeout" in combined_output.lower():
+            error_msg = "Upload timeout (device unreachable?)"
+        elif stderr:
+            for line in stderr.split("\n"):
+                if "ERROR" in line.upper() or "Error" in line:
+                    error_msg = line.strip()
+                    break
+        
+        log_normal(f"  ✗ {error_msg}")
+        
+        if opts.get("stop_on_upload_error", True):
+            return (False, error_msg)
+        else:
+            return (False, error_msg)
+    
+    log_verbose("  ✓ Upload successful")
+    return (True, "")
+
+# ============================================================================
+# FILTERING & SELECTION
+# ============================================================================
+
+def matches_pattern(text: str, patterns: List[str]) -> bool:
+    """Check if text matches any of the given patterns"""
+    if not patterns:
+        return False
+    
+    for pattern in patterns:
+        if not pattern:
+            continue
+        # Simple wildcard matching: * means any characters
+        regex_pattern = pattern.replace("*", ".*")
+        if re.search(regex_pattern, text, re.IGNORECASE):
+            return True
+    
+    return False
+
+def should_process_device(device: Dict, opts: Dict, progress: Dict) -> Tuple[bool, str]:
+    """
+    Determine if a device should be processed
+    Returns: (should_process, reason_if_not)
+    """
+    name = device["name"]
+    config = device["config_file"]
+    current = device["current_version"]
+    deployed = device["deployed_version"]
+    
+    # Check if already processed
+    if name in progress.get("done", []):
+        return (False, "already processed (in done list)")
+    
+    if name in progress.get("failed", []):
+        return (False, "previously failed (in failed list)")
+    
+    if name in progress.get("skipped", []):
+        return (False, "previously skipped (in skipped list)")
+    
+    # Device name filtering
+    include_patterns = opts.get("device_name_patterns", [])
+    exclude_patterns = opts.get("skip_device_name_patterns", [])
+    
+    if include_patterns:
+        if not matches_pattern(name, include_patterns):
+            return (False, f"device name doesn't match include patterns")
+    
+    if matches_pattern(name, exclude_patterns):
+        return (False, f"device name matches exclude pattern")
+    
+    # YAML name filtering
+    yaml_include = opts.get("yaml_name_patterns", [])
+    yaml_exclude = opts.get("skip_yaml_name_patterns", [])
+    
+    if yaml_include:
+        if not matches_pattern(config, yaml_include):
+            return (False, f"config file doesn't match include patterns")
+    
+    if matches_pattern(config, yaml_exclude):
+        return (False, f"config file matches exclude pattern")
+    
+    # Version-based logic
+    if not deployed:
+        if not opts.get("update_when_no_deployed_version", False):
+            return (False, "no deployed version (update_when_no_deployed_version=false)")
+    
+    if current and deployed and current == deployed:
+        if not opts.get("update_when_version_matches", False):
+            return (False, f"versions match ({current})")
+    
+    return (True, "")
+
+def filter_devices(devices: List[Dict], opts: Dict, progress: Dict) -> List[Dict]:
+    """Filter devices based on configuration"""
+    log_header("Filtering Devices")
+    
+    total = len(devices)
+    log_normal(f"Total devices found: {total}")
+    
+    filtered = []
     skip_reasons = {}
     
-    # Apply whitelist if specified
-    whitelist = opts.get("update_only_these", [])
-    if whitelist:
-        devices = [d for d in devices if d["name"] in whitelist]
-        log(f"Whitelist active: {len(whitelist)} device(s) specified")
-    
-    # Apply start_from_device
-    start_from = opts.get("start_from_device", "")
-    if start_from:
-        found = False
-        filtered = []
-        for d in devices:
-            if d["name"] == start_from:
-                found = True
-            if found:
-                filtered.append(d)
+    for device in devices:
+        should_process, reason = should_process_device(device, opts, progress)
         
-        if found:
-            devices = filtered
-            log(f"Starting from device: {start_from}")
+        if should_process:
+            filtered.append(device)
+            log_verbose(f"✓ {device['name']} - will process")
         else:
-            log(f"WARNING: start_from_device '{start_from}' not found; processing all")
+            log_verbose(f"✗ {device['name']} - {reason}")
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
     
-    # Check which devices need updates
-    filtered = []
-    for dev in devices:
-        name = dev["name"]
-        
-        # Skip already processed
-        if name in progress.get("done", []):
-            skip_reasons[name] = "already updated this run"
-            continue
-        
-        # Check if update needed
-        needs, reason = needs_update(name, progress)
-        if not needs:
-            skip_reasons[name] = reason
-            continue
-        
-        filtered.append(dev)
+    log_normal(f"Devices to process: {len(filtered)}")
+    log_normal(f"Devices skipped: {total - len(filtered)}")
     
-    return (filtered, skip_reasons)
+    if skip_reasons:
+        log_verbose("")
+        log_verbose("Skip reasons:")
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            log_verbose(f"  - {reason}: {count}")
+    
+    return filtered
 
 # ============================================================================
-# MAIN UPDATE LOGIC
+# DEVICE PROCESSING
 # ============================================================================
 
-def update_device(
-    dev: dict,
-    opts: Dict,
-    progress: Dict,
-    dry_run: bool
-) -> str:
-    """
-    Update a single device
-    Returns: status ("done", "failed", "skipped")
-    """
-    name = dev["name"]
-    node = dev["node"]
-    yaml_name = dev["config"]
-    ip = dev["address"]
+def process_devices(devices: List[Dict], opts: Dict, progress: Dict):
+    """Process (compile and upload) filtered devices"""
+    if not devices:
+        log_normal("")
+        log_normal("No devices to process.")
+        return
     
-    container = opts["esphome_container"]
-    skip_offline = opts.get("skip_offline", True)
+    log_header("Processing Devices")
     
-    log(f"Config: {yaml_name}")
+    total = len(devices)
+    dry_run = opts.get("dry_run", False)
     
-    # Show version info
-    deployed, current = read_dashboard_versions(name)
-    log(f"Versions: deployed={deployed or 'unknown'}, current={current or 'unknown'}")
-    
-    # Determine target - prefer IP, fallback to mDNS
-    if ip:
-        target = ip
-        log(f"Using static IP: {target}")
-    else:
-        target = f"{node}.local"
-        log(f"No static IP found; using mDNS: {target}")
-    
-    # Ping check (only if we have an IP and skip_offline is enabled)
-    if skip_offline and ip:
-        if not ping_host(ip):
-            log(f"⚠ Device appears offline (ping failed); skipping")
-            return "skipped"
-    elif skip_offline and not ip:
-        log(f"⚠ Cannot ping mDNS address; will attempt upload anyway")
-    
-    # Dry run mode
     if dry_run:
-        log("→ DRY RUN: Would compile and upload here")
-        return "done"
+        log_normal("DRY RUN MODE - No actual compilation or upload will occur")
+        log_normal("")
     
-    # Real update
-    log(f"→ Starting update for {name}")
-    
-    # Compile
-    bin_path = compile_in_esphome_container(container, yaml_name, name)
-    if STOP_REQUESTED:
-        log("Stop requested during compile")
-        return "skipped"
-    
-    if not bin_path:
-        return "failed"
-    
-    # Upload - try multiple targets if needed
-    upload_targets = []
-    if ip:
-        upload_targets.append(ip)
-    # Always try mDNS as fallback (unless we already have IP and it worked)
-    upload_targets.append(f"{node}.local")
-    
-    last_output = ""
-    for idx, attempt_target in enumerate(upload_targets):
-        # Skip duplicate targets (if IP == node.local somehow)
-        if idx > 0 and attempt_target == upload_targets[0]:
-            continue
-            
-        log(f"→ Attempting OTA upload to {attempt_target}")
-        ok, out = ota_upload_via_esphome(container, yaml_name, attempt_target)
-        last_output = out
+    for idx, device in enumerate(devices, start=1):
+        name = device["name"]
+        config = device["config_file"]
+        current = device["current_version"]
+        deployed = device["deployed_version"]
         
-        if ok:
-            log(f"→ OTA upload successful to {attempt_target}")
-            return "done"
-        else:
-            if idx < len(upload_targets) - 1:
-                log(f"✗ Upload to {attempt_target} failed, trying next target...")
-            else:
-                log(f"✗ Upload to {attempt_target} failed (final attempt)")
+        log_normal("")
+        log_normal(f"[{idx}/{total}] Processing: {name}")
+        log_verbose(f"  Config: {config}")
+        log_verbose(f"  Versions: deployed={deployed or 'unknown'}, current={current or 'unknown'}")
+        
+        yaml_path = ESPHOME_DIR / config
+        
+        if dry_run:
+            log_normal("  → [DRY RUN] Would compile and upload")
+            progress["done"].append(name)
+            save_progress(progress)
+            continue
+        
+        # Compile
+        compile_ok, compile_error = compile_device(yaml_path, opts)
+        if not compile_ok:
+            log_normal(f"  ✗ Compilation failed: {compile_error}")
+            progress["failed"].append(name)
+            save_progress(progress)
+            
+            if opts.get("stop_on_compilation_error", True):
+                log_normal("")
+                log_normal("Stopping due to compilation error (stop_on_compilation_error=true)")
+                break
+            continue
+        
+        # Upload
+        upload_ok, upload_error = upload_device(yaml_path, opts)
+        if not upload_ok:
+            log_normal(f"  ✗ Upload failed: {upload_error}")
+            progress["failed"].append(name)
+            save_progress(progress)
+            
+            if opts.get("stop_on_upload_error", True):
+                log_normal("")
+                log_normal("Stopping due to upload error (stop_on_upload_error=true)")
+                break
+            continue
+        
+        # Success
+        log_normal(f"  ✓ Successfully updated {name}")
+        progress["done"].append(name)
+        save_progress(progress)
+
+# ============================================================================
+# SUMMARY & REPORTING
+# ============================================================================
+
+def print_summary(devices: List[Dict], filtered: List[Dict], progress: Dict, opts: Dict):
+    """Print final summary of operation"""
+    log_header("Summary")
     
-    # All targets failed
-    tail = "\n".join(last_output.splitlines()[-40:])
-    log("OTA upload failed to all targets. Output (last 40 lines):")
-    for line in tail.splitlines():
-        log(f"  {line}")
-    log(f"✗ Update failed for {name}")
-    return "failed"
+    total = len(devices)
+    processed = len(filtered)
+    done = len(progress.get("done", []))
+    failed = len(progress.get("failed", []))
+    skipped = total - processed
+    
+    log_quiet(f"Total devices: {total}")
+    log_quiet(f"Devices processed: {done}")
+    log_quiet(f"Devices failed: {failed}")
+    log_quiet(f"Devices skipped: {skipped}")
+    
+    if failed > 0:
+        log_quiet("")
+        log_quiet("Failed devices:")
+        for name in progress.get("failed", []):
+            log_quiet(f"  - {name}")
+    
+    if opts.get("dry_run", False):
+        log_quiet("")
+        log_quiet("This was a DRY RUN - no actual changes were made")
+    
+    log_quiet("")
+    log_quiet(f"Log file: {LOG_FILE}")
+    log_quiet(f"Progress file: {PROGRESS_FILE}")
+    log_quiet("")
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 def main():
     """Main execution function"""
@@ -872,167 +664,46 @@ def main():
     state = load_state()
     progress = load_progress()
     
+    # Set log level FIRST before any logging
+    set_log_level(opts.get("log_level", "normal"))
+    
     # Housekeeping
     progress = perform_housekeeping(opts, state, progress)
     
+    # Start main execution
+    log_header(f"ESPHome Selective Updates v{os.environ.get('ADDON_VERSION', 'unknown')}")
+    log_normal(f"Log level: {opts.get('log_level', 'normal')}")
+    
     # Safety checks
     if not verify_safe_operation():
-        log("")
-        log("Safety checks failed. Cannot continue.")
+        log_quiet("")
+        log_quiet("Safety checks failed. Cannot continue.")
         sys.exit(1)
     
-    # Verify ESPHome container
-    esphome_container = opts["esphome_container"]
-    if not verify_esphome_container(esphome_container):
-        sys.exit(1)
-    
-    # Verify ESPHome config
-    if not verify_esphome_config_dir():
-        sys.exit(1)
-    
-    log_section("Safety Checks Complete")
-    log("✓ All safety checks passed")
-    log(f"✓ Operating boundaries:")
-    log(f"  • Docker container: {esphome_container}")
-    log(f"  • Config directory: {ESPHOME_CONFIG_DIR}")
-    log(f"  • Build output: /config/esphome/builds/")
-    log(f"  • No access to: host system, other containers, external networks")
-    
-    # Start main process
-    log_header("ESPHome Selective Updates v2.0")
-    
-    dry_run = opts.get("dry_run", False)
-    if dry_run:
-        log("⚠ DRY RUN MODE - No actual updates will be performed")
-    
-    # Discover devices
-    log_section("Device Discovery")
-    devices = discover_devices()
-    total = len(devices)
-    log(f"Found {total} total device configuration(s)")
-    
-    if total == 0:
-        log("No devices to process. Exiting.")
-        return
-    
-    # Show IP extraction summary
-    devices_with_ip = sum(1 for d in devices if d["address"])
-    devices_mdns = total - devices_with_ip
-    log(f"  • Devices with static IP: {devices_with_ip}")
-    log(f"  • Devices using mDNS: {devices_mdns}")
+    # Get devices
+    log_header("Discovering Devices")
+    devices = get_esphome_devices()
+    log_normal(f"Discovered {len(devices)} ESPHome devices")
     
     # Filter devices
-    log_section("Filtering Devices")
-    filtered_devices, skip_reasons = filter_devices(devices, opts, progress)
-    
-    log(f"Devices needing update: {len(filtered_devices)}")
-    log(f"Devices to skip: {len(skip_reasons)}")
-    
-    if skip_reasons:
-        log("")
-        log("Skipped devices:")
-        for name, reason in sorted(skip_reasons.items()):
-            log(f"  • {name}: {reason}")
-    
-    # Apply max_devices_per_run limit
-    max_devices = opts.get("max_devices_per_run", 0)
-    if max_devices > 0 and len(filtered_devices) > max_devices:
-        log("")
-        log(f"⚠ Limiting to {max_devices} device(s) per run (max_devices_per_run)")
-        filtered_devices = filtered_devices[:max_devices]
-    
-    to_process = len(filtered_devices)
-    if to_process == 0:
-        log("")
-        log("✓ No devices need updating. All done!")
-        return
+    filtered_devices = filter_devices(devices, opts, progress)
     
     # Process devices
-    log_header(f"Processing {to_process} Device(s)")
+    process_devices(filtered_devices, opts, progress)
     
-    done = set(progress.get("done", []))
-    failed = set(progress.get("failed", []))
-    skipped = set(progress.get("skipped", []))
-    
-    delay = int(opts.get("delay_between_updates", 3))
-    
-    for idx, dev in enumerate(filtered_devices, start=1):
-        if STOP_REQUESTED:
-            log("")
-            log("⚠ Stop requested; saving progress and exiting")
-            break
-        
-        name = dev["name"]
-        
-        log("")
-        log(f"[{idx}/{to_process}] Processing: {name}")
-        
-        status = update_device(dev, opts, progress, dry_run)
-        
-        # Update progress
-        if status == "done":
-            done.add(name)
-            failed.discard(name)
-            log(f"✓ {name} completed successfully")
-        elif status == "failed":
-            failed.add(name)
-            log(f"✗ {name} failed")
-        elif status == "skipped":
-            skipped.add(name)
-            log(f"⊘ {name} skipped")
-        
-        # Save progress
-        progress["done"] = sorted(list(done))
-        progress["failed"] = sorted(list(failed))
-        progress["skipped"] = sorted(list(skipped))
-        save_progress(progress)
-        
-        # Delay between devices
-        if idx < to_process:  # Don't delay after last device
-            for _ in range(max(0, delay)):
-                if STOP_REQUESTED:
-                    break
-                time.sleep(1)
-        
-        if STOP_REQUESTED:
-            log("")
-            log("⚠ Stop requested after device processing")
-            break
-    
-    # Final summary
-    log_header("Summary")
-    log(f"Total devices: {total}")
-    log(f"Successfully updated: {len(done)}")
-    log(f"Failed: {len(failed)}")
-    log(f"Skipped: {len(skipped)}")
-    
-    if failed:
-        log("")
-        log("Failed devices:")
-        for name in sorted(failed):
-            log(f"  • {name}")
-    
-    if dry_run:
-        log("")
-        log("⚠ DRY RUN MODE - No actual changes were made")
-    
-    log("")
-    log("✓ ESPHome Selective Updates complete")
-
-# ============================================================================
-# ENTRY POINT
-# ============================================================================
+    # Print summary
+    print_summary(devices, filtered_devices, progress, opts)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        log("")
-        log("⚠ Interrupted by user")
+        log_quiet("")
+        log_quiet("Interrupted by user")
         sys.exit(130)
     except Exception as e:
-        log("")
-        log(f"✗ FATAL ERROR: {e}")
+        log_quiet("")
+        log_quiet(f"FATAL ERROR: {e}")
         import traceback
-        log(traceback.format_exc())
+        log_debug(traceback.format_exc())
         sys.exit(1)

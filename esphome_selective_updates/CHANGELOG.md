@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.0.1] - 2024-11-20
+### Added
+Log Level Control: New log_level configuration option with 4 levels (quiet/normal/verbose/debug)
+
+quiet: Minimal output - only headers, errors, and summary (~50 lines for 377 devices)
+normal: Standard operation logging - device start/complete/fail messages (default)
+verbose: Detailed information including version details, config files, skip reasons
+debug: Full debug output including docker command outputs and compilation logs
+
+Early Log Clearing: Improved log clearing that happens before any logging starts
+Full logs always saved to /config/esphome_smart_update.log regardless of stdout level
+
+### Changed
+Drastically reduced Supervisor log output for large deployments
+All log functions now use level-aware logging (log_quiet, log_normal, log_verbose, log_debug)
+Improved run.sh to handle log clearing before Python script starts
+
+### Fixed
+Supervisor log tab now properly respects log level settings
+Log clearing options (clear_log_on_start, clear_log_now) now work correctly
+Log file clearing happens at the right time in the startup sequence
+
+### Performance
+Massive reduction in Supervisor log size: With 377 devices in "quiet" mode, logs reduced from thousands of lines to ~50 lines
+Maintains full debugging capability via persistent log file
+Users can troubleshoot later without re-running at higher log levels
+
+
+
 ## [2.0.1] - 2025-11-20
 
 ### Fixed

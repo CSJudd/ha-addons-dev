@@ -1,66 +1,49 @@
 {
   "name": "ESPHome Selective Updates",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "slug": "esphome_selective_updates",
-  "description": "Smart bulk updates for ESPHome devices - only updates devices that need it, with resume capability",
-  "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "description": "Intelligently update ESPHome devices based on version changes",
+  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
   "startup": "application",
   "boot": "manual",
   "init": false,
-
-  "homeassistant_api": true,
-  "hassio_api": true,
-  "hassio_role": "manager",
-
-  "host_network": true,
   "docker_api": true,
-
-  "apparmor": false,
-
-  "privileged": ["SYS_ADMIN"],
-
-  "map": ["config:rw", "data:rw"],
-
+  "hassio_api": true,
+  "host_network": true,
   "options": {
-    "ota_password": "",
-    "delay_between_updates": 3,
-    "esphome_container": "addon_15ef4d2f_esphome",
-    "skip_offline": true,
-
-    "dry_run": false,
-    "max_devices_per_run": 0,
-    "start_from_device": "",
-    "update_only_these": [],
-
+    "device_name_patterns": [],
+    "skip_device_name_patterns": [],
+    "yaml_name_patterns": [],
+    "skip_yaml_name_patterns": [],
+    "update_when_no_deployed_version": false,
+    "update_when_version_matches": false,
+    "clear_progress_on_start": false,
+    "clear_progress_now": false,
     "clear_log_on_start": false,
     "clear_log_on_version_change": true,
     "clear_log_now": false,
-
-    "clear_progress_on_start": false,
-    "clear_progress_now": false
+    "stop_on_compilation_warning": false,
+    "stop_on_compilation_error": true,
+    "stop_on_upload_error": true,
+    "dry_run": false,
+    "log_level": "normal"
   },
-
   "schema": {
-    "ota_password": "str",
-    "delay_between_updates": "int(1,60)",
-    "esphome_container": "str",
-    "skip_offline": "bool",
-
-    "dry_run": "bool",
-    "max_devices_per_run": "int(0,500)",
-    "start_from_device": "str?",
-    "update_only_these": ["str?"],
-
+    "device_name_patterns": ["str?"],
+    "skip_device_name_patterns": ["str?"],
+    "yaml_name_patterns": ["str?"],
+    "skip_yaml_name_patterns": ["str?"],
+    "update_when_no_deployed_version": "bool",
+    "update_when_version_matches": "bool",
+    "clear_progress_on_start": "bool",
+    "clear_progress_now": "bool",
     "clear_log_on_start": "bool",
     "clear_log_on_version_change": "bool",
     "clear_log_now": "bool",
-
-    "clear_progress_on_start": "bool",
-    "clear_progress_now": "bool"
-  },
-
-  "ports": {},
-  "ports_description": {},
-
-  "url": "https://github.com/CSJudd/ha-addons-dev/tree/master/esphome_selective_updates"
+    "stop_on_compilation_warning": "bool",
+    "stop_on_compilation_error": "bool",
+    "stop_on_upload_error": "bool",
+    "dry_run": "bool",
+    "log_level": "list(quiet|normal|verbose|debug)"
+  }
 }
