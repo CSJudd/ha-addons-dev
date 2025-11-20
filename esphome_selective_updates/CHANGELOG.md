@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.0.1] - 2025-11-20
+
+### Fixed
+- **Critical:** Fixed IP address extraction from ESPHome YAML configurations
+  - Now properly detects IPs defined in substitution variables (e.g., `device_static_ip: "10.128.88.123"`)
+  - Added support for inline manual_ip format (`manual_ip: 192.168.1.100`)
+  - Added support for multi-line static_ip format (under `manual_ip:` block)
+  - Added support for generic IP/address patterns in substitutions
+  - Resolves issue where devices with static IPs were incorrectly falling back to mDNS resolution
+
+### Improved
+- **OTA Upload Reliability:**
+  - Implements automatic fallback from static IP to mDNS if initial upload fails
+  - Tries multiple upload targets intelligently (IP first, then mDNS)
+  - Prevents duplicate upload attempts to the same target
+  - Better error messages indicating which target failed and why
+
+- **Logging Enhancements:**
+  - Added device discovery summary showing count of static IP vs mDNS devices
+  - Clearly indicates connection method being used for each device (static IP or mDNS)
+  - Shows which upload target succeeded or failed during multi-target attempts
+  - More descriptive progress messages during OTA operations
+
+### Changed
+- Updated device discovery logic to handle multiple IP address formats
+- Improved target selection strategy with intelligent fallback behavior
+- Enhanced upload process to be more resilient to network variations
+
+### Technical Details
+This release improves compatibility with diverse ESPHome configuration styles:
+- **Substitution-based IPs** (common in large deployments): `device_static_ip: "10.x.x.x"`
+- **Inline manual IPs**: `manual_ip: 192.168.1.100`
+- **Block-style manual IPs**: `manual_ip:` with `static_ip:` on separate line
+- **mDNS-only devices**: Automatic detection and fallback for devices without static IPs
+
+### Compatibility
+- Compatible with ESPHome 2025.11.0 and later
+- Maintains backward compatibility with all 2.0.0 configurations
+- No configuration changes required for upgrade
+
+---
+
+
 ## [2.0.0] - 2025-10-30
 
 ### Major Rewrite - Production Ready Release

@@ -252,11 +252,35 @@ def discover_devices() -> List[dict]:
         except Exception:
             text = ""
         
-        # Extract IP address (if manually configured)
+        # Extract IP address - try multiple strategies
         ip = None
-        m_ip = re.search(r"manual_ip\s*:\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})", text)
-        if m_ip:
-            ip = m_ip.group(1).strip()
+        
+        # Strategy 1: Substitution variable (device_static_ip: "10.128.88.123")
+        # This handles the common pattern where IPs are defined in substitutions
+        m_sub = re.search(r"device_static_ip\s*:\s*['\"]?([0-9]{1,3}(?:\.[0-9]{1,3}){3})['\"]?", text)
+        if m_sub:
+            ip = m_sub.group(1).strip()
+        
+        # Strategy 2: Direct inline manual_ip (manual_ip: 192.168.1.100)
+        if not ip:
+            m_inline = re.search(r"manual_ip\s*:\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})", text)
+            if m_inline:
+                ip = m_inline.group(1).strip()
+        
+        # Strategy 3: static_ip under manual_ip block (multi-line YAML)
+        if not ip:
+            m_static = re.search(r"static_ip\s*:\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})", text)
+            if m_static:
+                ip = m_static.group(1).strip()
+        
+        # Strategy 4: Look for any substitution that might contain an IP
+        # Matches patterns like: my_ip: "10.0.0.1" or device_ip: 192.168.1.1
+        if not ip:
+            m_any_sub = re.search(r"(?:ip|address)\s*:\s*['\"]?([0-9]{1,3}(?:\.[0-9]{1,3}){3})['\"]?", text, re.IGNORECASE)
+            if m_any_sub:
+                ip = m_any_sub.group(1).strip()
+        
+        # If no IP found, will fall back to mDNS in update logic
         
         # Extract node name
         node = parse_node_name(text) or yaml_file.stem
@@ -265,7 +289,7 @@ def discover_devices() -> List[dict]:
             "name": yaml_file.stem,
             "node": node,
             "config": yaml_file.name,
-            "address": ip,
+            "address": ip,  # Can be None - will use mDNS fallback
         })
     
     return out
@@ -774,16 +798,21 @@ def update_device(
     deployed, current = read_dashboard_versions(name)
     log(f"Versions: deployed={deployed or 'unknown'}, current={current or 'unknown'}")
     
-    # Determine target
-    target = ip if ip else f"{node}.local"
-    if not ip:
-        log(f"No manual IP configured; using mDNS: {target}")
+    # Determine target - prefer IP, fallback to mDNS
+    if ip:
+        target = ip
+        log(f"Using static IP: {target}")
+    else:
+        target = f"{node}.local"
+        log(f"No static IP found; using mDNS: {target}")
     
-    # Ping check
+    # Ping check (only if we have an IP and skip_offline is enabled)
     if skip_offline and ip:
         if not ping_host(ip):
             log(f"⚠ Device appears offline (ping failed); skipping")
             return "skipped"
+    elif skip_offline and not ip:
+        log(f"⚠ Cannot ping mDNS address; will attempt upload anyway")
     
     # Dry run mode
     if dry_run:
@@ -802,20 +831,39 @@ def update_device(
     if not bin_path:
         return "failed"
     
-    # Upload
-    ok, out = ota_upload_via_esphome(container, yaml_name, target)
+    # Upload - try multiple targets if needed
+    upload_targets = []
+    if ip:
+        upload_targets.append(ip)
+    # Always try mDNS as fallback (unless we already have IP and it worked)
+    upload_targets.append(f"{node}.local")
     
-    if ok:
-        log("→ OTA upload successful")
-        return "done"
-    else:
-        # Log tail of output for debugging
-        tail = "\n".join(out.splitlines()[-40:])
-        log("OTA upload failed. Output (last 40 lines):")
-        for line in tail.splitlines():
-            log(f"  {line}")
-        log(f"✗ Update failed for {name}")
-        return "failed"
+    last_output = ""
+    for idx, attempt_target in enumerate(upload_targets):
+        # Skip duplicate targets (if IP == node.local somehow)
+        if idx > 0 and attempt_target == upload_targets[0]:
+            continue
+            
+        log(f"→ Attempting OTA upload to {attempt_target}")
+        ok, out = ota_upload_via_esphome(container, yaml_name, attempt_target)
+        last_output = out
+        
+        if ok:
+            log(f"→ OTA upload successful to {attempt_target}")
+            return "done"
+        else:
+            if idx < len(upload_targets) - 1:
+                log(f"✗ Upload to {attempt_target} failed, trying next target...")
+            else:
+                log(f"✗ Upload to {attempt_target} failed (final attempt)")
+    
+    # All targets failed
+    tail = "\n".join(last_output.splitlines()[-40:])
+    log("OTA upload failed to all targets. Output (last 40 lines):")
+    for line in tail.splitlines():
+        log(f"  {line}")
+    log(f"✗ Update failed for {name}")
+    return "failed"
 
 def main():
     """Main execution function"""
@@ -866,6 +914,12 @@ def main():
     if total == 0:
         log("No devices to process. Exiting.")
         return
+    
+    # Show IP extraction summary
+    devices_with_ip = sum(1 for d in devices if d["address"])
+    devices_mdns = total - devices_with_ip
+    log(f"  • Devices with static IP: {devices_with_ip}")
+    log(f"  • Devices using mDNS: {devices_mdns}")
     
     # Filter devices
     log_section("Filtering Devices")
