@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Selective Updates",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "slug": "esphome_selective_updates",
   "description": "Intelligently update ESPHome devices based on version changes",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
@@ -10,6 +10,7 @@
   "docker_api": true,
   "hassio_api": true,
   "host_network": true,
+  "map": ["config:rw"],
   "options": {
     "device_name_patterns": [],
     "skip_device_name_patterns": [],
