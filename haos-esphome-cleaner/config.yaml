@@ -1,0 +1,40 @@
+name: HAOS Maintenance Cleaner
+version: "1.0.0"
+slug: haos_maintenance_cleaner
+description: Automatically cleans ESPHome build artifacts, Docker logs, Supervisor logs, and Home Assistant logs
+url: https://github.com/yourusername/haos-maintenance-cleaner
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+startup: services
+boot: auto
+init: false
+host_network: false
+hassio_api: true
+hassio_role: default
+map:
+  - config:rw
+  - addons:rw
+  - backup:ro
+options:
+  schedule_enabled: true
+  cleanup_time: "03:30"
+  run_on_startup: true
+  cleanup_esphome: true
+  cleanup_docker_logs: true
+  cleanup_supervisor_log: true
+  supervisor_log_lines: 10000
+  cleanup_ha_logs: true
+  ha_log_retention_days: 7
+schema:
+  schedule_enabled: bool
+  cleanup_time: str
+  run_on_startup: bool
+  cleanup_esphome: bool
+  cleanup_docker_logs: bool
+  cleanup_supervisor_log: bool
+  supervisor_log_lines: int(0,)
+  cleanup_ha_logs: bool
+  ha_log_retention_days: int(0,)
