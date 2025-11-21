@@ -16,7 +16,7 @@ A Home Assistant add-on for automatically cleaning up ESPHome build artifacts, D
 
 1. Navigate to **Settings** → **Add-ons** → **Add-on Store** in Home Assistant
 2. Click the menu (⋮) in the top right and select **Repositories**
-3. Add this repository URL: `https://github.com/yourusername/haos-maintenance-cleaner`
+3. Add this repository URL: `https://github.com/CSJudd/ha-addons-dev.git`
 4. Find "HAOS Maintenance Cleaner" in the add-on store and click **Install**
 
 ### Local Installation
@@ -63,7 +63,7 @@ ha_log_retention_days: 7        # Delete logs older than N days (0 = delete all)
 
 ## Support
 
-For issues, feature requests, or contributions, visit: https://github.com/yourusername/haos-maintenance-cleaner
+For issues, feature requests, or contributions, visit: https://github.com/CSJudd/haos-maintenance-cleaner
 
 ## License
 

@@ -244,7 +244,7 @@ def verify_safe_operation() -> bool:
     return True
 
 # ============================================================================
-# ESPHOME INTERACTION
+# ESPHOME INTERACTION/COMPILATION
 # ============================================================================
 
 def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[int, str, str]:
@@ -448,6 +448,89 @@ def upload_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
     
     log_verbose("  ✓ Upload successful")
     return (True, "")
+
+def repair_dashboard_metadata(
+    devices: List[dict],
+    container: str,
+    skip_existing: bool = True
+) -> Tuple[int, int]:
+    """
+    Repair dashboard metadata by compiling devices without OTA upload.
+    This populates deployed_version and current_version in dashboard.json.
+    
+    Returns: (repaired_count, failed_count)
+    """
+    log_section("Dashboard Metadata Repair Mode")
+    log("This mode compiles devices to populate dashboard.json metadata")
+    log("NO OTA uploads will be performed")
+    log("")
+    
+    if skip_existing:
+        log("Will skip devices that already have metadata")
+    else:
+        log("Will recompile ALL devices regardless of existing metadata")
+    
+    log("")
+    
+    repaired = 0
+    failed = 0
+    skipped = 0
+    
+    total = len(devices)
+    
+    for idx, dev in enumerate(devices, start=1):
+        if STOP_REQUESTED:
+            log("")
+            log("⚠ Stop requested during repair")
+            break
+        
+        name = dev["name"]
+        yaml_name = dev["config"]
+        
+        log(f"[{idx}/{total}] Checking: {name}")
+        
+        # Check if metadata exists
+        deployed, current = read_dashboard_versions(name)
+        
+        if skip_existing and deployed is not None and current is not None:
+            log(f"  ✓ Metadata exists: deployed={deployed}, current={current}")
+            skipped += 1
+            continue
+        
+        # Compile to generate metadata
+        log(f"  → Compiling {yaml_name} to generate metadata...")
+        bin_path = compile_in_esphome_container(container, yaml_name, name)
+        
+        if STOP_REQUESTED:
+            log("  ⚠ Stop requested")
+            break
+        
+        if bin_path:
+            # Verify metadata was created
+            deployed, current = read_dashboard_versions(name)
+            if deployed is not None or current is not None:
+                log(f"  ✓ Metadata generated: deployed={deployed}, current={current}")
+                repaired += 1
+            else:
+                log(f"  ⚠ Compiled but metadata not populated")
+                failed += 1
+        else:
+            log(f"  ✗ Compilation failed")
+            failed += 1
+        
+        # Small delay between devices
+        if idx < total and not STOP_REQUESTED:
+            time.sleep(1)
+    
+    log("")
+    log_section("Repair Summary")
+    log(f"Total devices: {total}")
+    log(f"Metadata repaired: {repaired}")
+    log(f"Already had metadata: {skipped}")
+    log(f"Failed: {failed}")
+    
+    return (repaired, failed)
+
 
 # ============================================================================
 # FILTERING & SELECTION
