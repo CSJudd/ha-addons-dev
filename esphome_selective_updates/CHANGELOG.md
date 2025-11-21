@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 
 ---
+## [2.0.5] - 2024-11-21
+
+### Updated
+- **Dockerfile Updated to 2.0.4**: Updated Dockerfile from v2.0.0 to 2.0.4
+
+---
 ## [2.0.4] - 2024-11-21
 
 ### Fixed
