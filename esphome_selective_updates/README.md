@@ -212,7 +212,7 @@ stop_on_upload_error: true
 Expected initial log lines (normal mode):
 ```
 ======================================================================
-ESPHome Selective Updates v2.0.1
+ESPHome Selective Updates v2.0.4
 ======================================================================
 Log level: normal
 
@@ -301,7 +301,7 @@ Before your first real run:
 
 ```
 ======================================================================
-ESPHome Selective Updates v2.0.1
+ESPHome Selective Updates v2.0.4
 ======================================================================
 Log level: normal
 
@@ -364,7 +364,7 @@ Progress file: /config/esphome_update_progress.json
 
 ```
 ======================================================================
-ESPHome Selective Updates v2.0.1
+ESPHome Selective Updates v2.0.4
 ======================================================================
 
 ======================================================================
@@ -601,6 +601,7 @@ Until then, this add-on provides the functionality you need today. If ESPHome ad
 
 | Version | Key Changes |
 |---------|-------------|
+| **2.0.4** | Fixed ESPHome container auto-detection, added config directory mount, resolved "not running" false positives |
 | **2.0.1** | Added configurable log levels (quiet/normal/verbose/debug), fixed log clearing, drastically reduced Supervisor log output |
 | **2.0.0** | Major rewrite: Added dry run, offline detection, batch control, better safety checks, clearer Protection Mode messaging |
 | **1.2.x** | Switched to Docker exec mode, added graceful stop |

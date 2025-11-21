@@ -61,9 +61,13 @@ if [ ! -d "/config/esphome" ]; then
 fi
 
 # Check if ESPHome add-on is running
-if ! docker ps --format '{{.Names}}' | grep -q "addon_5c53de3b_esphome"; then
+ESPHOME_CONTAINER=$(docker ps --format '{{.Names}}' | grep "addon_.*_esphome" || true)
+if [ -z "${ESPHOME_CONTAINER}" ]; then
   log_fatal "ESPHome add-on is not running. Please start it first."
 fi
+
+log_info "Found ESPHome container: ${ESPHOME_CONTAINER}"
+export ESPHOME_CONTAINER
 
 log_info "Configuration validated successfully"
 

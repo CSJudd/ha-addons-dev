@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 ---
+## [2.0.4] - 2024-11-21
+
+### Fixed
+- **ESPHome Container Auto-Detection**: Add-on now automatically detects 
+  any ESPHome container name instead of using hardcoded value
+- **Configuration Directory Mount**: Added `"map": ["config:rw"]` to 
+  config.json to properly mount /config directory
+- Fixed "ESPHome directory not found" error on fresh installations
+- Fixed "ESPHome add-on is not running" false positive when container 
+  name differs from default
+
+### Changed
+- ESPHome container name is now auto-detected at startup and displayed in logs
+- Python script reads container name from environment variable set by run.sh
+- Improved startup validation logging to show which container was found
+
 
 ## [2.0.1] - 2024-11-20
 ### Added

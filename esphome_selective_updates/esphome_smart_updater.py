@@ -252,10 +252,13 @@ def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[in
     Execute an ESPHome command via docker exec
     Returns: (returncode, stdout, stderr)
     """
+    # Get ESPHome container name from environment (set by run.sh)
+    esphome_container = os.environ.get("ESPHOME_CONTAINER", "addon_5c53de3b_esphome")
+    
     # Build the docker exec command
     cmd = [
         "docker", "exec", "-i",
-        "addon_5c53de3b_esphome",
+        esphome_container,
         "esphome"
     ] + args
     
