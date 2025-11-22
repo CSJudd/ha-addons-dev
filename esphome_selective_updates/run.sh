@@ -60,13 +60,53 @@ if [ ! -d "/config/esphome" ]; then
   log_fatal "ESPHome directory not found at /config/esphome"
 fi
 
-# Check if ESPHome add-on is running
-ESPHOME_CONTAINER=$(docker ps --format '{{.Names}}' | grep "addon_.*_esphome" || true)
+# ============================================================================
+# ESPHome Container Detection (IMPROVED)
+# ============================================================================
+
+log_info "Detecting ESPHome container..."
+
+# Try multiple detection methods
+ESPHOME_CONTAINER=""
+
+# Method 1: Standard addon pattern
+ESPHOME_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E "addon_.*_esphome" | head -n 1 || true)
+
 if [ -z "${ESPHOME_CONTAINER}" ]; then
-  log_fatal "ESPHome add-on is not running. Please start it first."
+  log_info "Trying alternative container name pattern..."
+  # Method 2: Try hassio pattern
+  ESPHOME_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E "hassio.*esphome" | head -n 1 || true)
+fi
+
+if [ -z "${ESPHOME_CONTAINER}" ]; then
+  log_info "Trying generic esphome pattern..."
+  # Method 3: Any container with esphome in the name
+  ESPHOME_CONTAINER=$(docker ps --format '{{.Names}}' | grep -i "esphome" | head -n 1 || true)
+fi
+
+if [ -z "${ESPHOME_CONTAINER}" ]; then
+  log_fatal "ESPHome add-on is not running. Please start it first.
+
+Available running containers:
+$(docker ps --format '{{.Names}}')
+
+Please ensure the ESPHome add-on is started before running this add-on."
 fi
 
 log_info "Found ESPHome container: ${ESPHOME_CONTAINER}"
+
+# Verify the container is actually running
+if ! docker ps --filter "name=${ESPHOME_CONTAINER}" --format "{{.Names}}" | grep -q "${ESPHOME_CONTAINER}"; then
+  log_fatal "Container '${ESPHOME_CONTAINER}' exists but is not running"
+fi
+
+# Test if we can exec into the container
+if ! docker exec "${ESPHOME_CONTAINER}" echo "Connection test" >/dev/null 2>&1; then
+  log_fatal "Cannot execute commands in container '${ESPHOME_CONTAINER}'"
+fi
+
+log_info "✓ Container connectivity verified"
+
 export ESPHOME_CONTAINER
 
 log_info "Configuration validated successfully"
@@ -78,7 +118,8 @@ log_info "Configuration validated successfully"
 log_info "Setting up environment..."
 
 # Export add-on version for Python script
-export ADDON_VERSION="${BASHIO_ADDON_VERSION:-unknown}"
+# Try Bashio first, fall back to Dockerfile version
+export ADDON_VERSION="${BASHIO_ADDON_VERSION:-2.0.6}"
 
 log_info "Add-on version: ${ADDON_VERSION}"
 

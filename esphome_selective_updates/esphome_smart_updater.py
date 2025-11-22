@@ -289,7 +289,12 @@ def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[in
     Returns: (returncode, stdout, stderr)
     """
     # Get ESPHome container name from environment (set by run.sh)
-    esphome_container = os.environ.get("ESPHOME_CONTAINER", "addon_5c53de3b_esphome")
+    esphome_container = os.environ.get("ESPHOME_CONTAINER", "")
+    
+    if not esphome_container:
+        error_msg = "ESPHOME_CONTAINER environment variable not set"
+        log_debug(error_msg)
+        return (1, "", error_msg)
     
     # Build the docker exec command
     cmd = [
@@ -308,9 +313,18 @@ def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[in
             text=True,
             timeout=1800  # 30 minute timeout
         )
+        
+        # If we get "page not found", it's likely a Docker API error
+        if "page not found" in result.stderr.lower() or "page not found" in result.stdout.lower():
+            log_debug(f"Docker error - container may not exist: {esphome_container}")
+            log_debug(f"Stderr: {result.stderr}")
+            log_debug(f"Stdout: {result.stdout}")
+        
         return (result.returncode, result.stdout, result.stderr)
     except subprocess.TimeoutExpired:
         return (124, "", "Command timed out after 30 minutes")
+    except FileNotFoundError:
+        return (1, "", "Docker command not found - is Docker installed?")
     except Exception as e:
         return (1, "", str(e))
 
@@ -368,8 +382,11 @@ def get_device_name_from_yaml(yaml_path: Path) -> Optional[str]:
 
 def get_current_version(yaml_path: Path) -> Optional[str]:
     """Get current ESPHome version for a config"""
+    # The path inside the container
+    container_path = f"/config/esphome/{yaml_path.name}"
+    
     returncode, stdout, stderr = run_esphome_command(
-        ["version", str(yaml_path)]
+        ["version", container_path]
     )
     
     if returncode == 0:
@@ -389,8 +406,12 @@ def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
     """
     log_normal(f"  → Compiling {yaml_path.name}...")
     
+    # The path inside the container is the same as on the host
+    # because /config is mounted to both
+    container_path = f"/config/esphome/{yaml_path.name}"
+    
     returncode, stdout, stderr = run_esphome_command(
-        ["compile", str(yaml_path)]
+        ["compile", container_path]
     )
     
     log_debug(f"Compilation return code: {returncode}")
@@ -399,17 +420,17 @@ def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
     if stderr:
         log_debug(f"Compilation stderr:\n{stderr}")
     
-    # Check for warnings
-    combined_output = stdout + stderr
-    if "WARNING" in combined_output.upper():
-        log_verbose("  ⚠ Compilation produced warnings")
-        if opts.get("stop_on_compilation_warning", False):
-            return (False, "Compilation warning (stop_on_compilation_warning enabled)")
-    
-    # Check for errors
+    # Check for errors first
     if returncode != 0:
         error_msg = "Compilation failed"
-        if stderr:
+        combined_output = stdout + stderr
+        
+        # Check for specific error types
+        if "page not found" in combined_output.lower():
+            error_msg = "Docker container error - check ESPHome container is running"
+        elif "no such file" in combined_output.lower():
+            error_msg = f"YAML file not found in container: {container_path}"
+        elif stderr:
             # Extract first meaningful error line
             for line in stderr.split("\n"):
                 if "ERROR" in line.upper() or "Error" in line:
@@ -420,6 +441,15 @@ def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
         
         if opts.get("stop_on_compilation_error", True):
             return (False, error_msg)
+        else:
+            return (False, error_msg)
+    
+    # Check for warnings
+    combined_output = stdout + stderr
+    if "WARNING" in combined_output.upper():
+        log_verbose("  ⚠ Compilation produced warnings")
+        if opts.get("stop_on_compilation_warning", False):
+            return (False, "Compilation warning (stop_on_compilation_warning enabled)")
     
     log_verbose("  ✓ Compilation successful")
     return (True, "")
@@ -431,8 +461,11 @@ def upload_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
     """
     log_normal(f"  → Uploading to device...")
     
+    # The path inside the container
+    container_path = f"/config/esphome/{yaml_path.name}"
+    
     returncode, stdout, stderr = run_esphome_command(
-        ["upload", "--device", "OTA", str(yaml_path)]
+        ["upload", "--device", "OTA", container_path]
     )
     
     log_debug(f"Upload return code: {returncode}")
@@ -450,6 +483,8 @@ def upload_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
             error_msg = "Connection refused (device offline or wrong IP?)"
         elif "timeout" in combined_output.lower():
             error_msg = "Upload timeout (device unreachable?)"
+        elif "page not found" in combined_output.lower():
+            error_msg = "Docker container error - check ESPHome container is running"
         elif stderr:
             for line in stderr.split("\n"):
                 if "ERROR" in line.upper() or "Error" in line:
@@ -778,6 +813,44 @@ def main():
     # Start main execution
     log_header(f"ESPHome Selective Updates v{os.environ.get('ADDON_VERSION', 'unknown')}")
     log_normal(f"Log level: {opts.get('log_level', 'normal')}")
+    
+    # Verify ESPHome container is accessible
+    esphome_container = os.environ.get("ESPHOME_CONTAINER", "")
+    if not esphome_container:
+        log_quiet("")
+        log_quiet("ERROR: ESPHOME_CONTAINER environment variable not set")
+        log_quiet("This should be set by run.sh - check your startup script")
+        sys.exit(1)
+    
+    log_verbose(f"Using ESPHome container: {esphome_container}")
+    
+    # Test Docker connectivity
+    log_verbose("Testing Docker connectivity...")
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", f"name={esphome_container}", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode != 0:
+            log_quiet("")
+            log_quiet(f"ERROR: Cannot communicate with Docker daemon")
+            log_quiet(f"Docker error: {result.stderr}")
+            sys.exit(1)
+        
+        if esphome_container not in result.stdout:
+            log_quiet("")
+            log_quiet(f"ERROR: ESPHome container '{esphome_container}' is not running")
+            log_quiet(f"Running containers: {result.stdout.strip()}")
+            log_quiet("Please start the ESPHome add-on first")
+            sys.exit(1)
+        
+        log_verbose(f"✓ Docker connectivity verified")
+    except Exception as e:
+        log_quiet("")
+        log_quiet(f"ERROR: Failed to verify Docker connectivity: {e}")
+        sys.exit(1)
     
     # Safety checks
     if not verify_safe_operation():
