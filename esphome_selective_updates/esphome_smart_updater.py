@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 CONFIG_DIR = Path("/config")
 ESPHOME_DIR = CONFIG_DIR / "esphome"
+DASHBOARD_FILE = ESPHOME_DIR / ".esphome" / "dashboard.json"
 STATE_FILE = CONFIG_DIR / "esphome_smart_update_state.json"
 PROGRESS_FILE = CONFIG_DIR / "esphome_smart_update_progress.json"
 LOG_FILE = CONFIG_DIR / "esphome_smart_update.log"
@@ -41,6 +42,8 @@ DEFAULTS = {
     "stop_on_upload_error": True,
     "dry_run": False,
     "log_level": "normal",
+    "repair_dashboard_metadata": False,
+    "repair_skip_existing_metadata": True,
 }
 
 # Log level mapping
@@ -244,6 +247,39 @@ def verify_safe_operation() -> bool:
     return True
 
 # ============================================================================
+# DASHBOARD.JSON INTERACTION
+# ============================================================================
+
+def read_dashboard_json() -> Dict:
+    """Read the ESPHome dashboard.json file"""
+    if not DASHBOARD_FILE.exists():
+        log_debug(f"Dashboard file not found: {DASHBOARD_FILE}")
+        return {}
+    
+    try:
+        with DASHBOARD_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        log_debug(f"Error reading dashboard.json: {e}")
+        return {}
+
+def get_dashboard_versions(device_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get deployed_version and current_version from dashboard.json
+    Returns: (deployed_version, current_version)
+    """
+    dashboard = read_dashboard_json()
+    
+    for device in dashboard.get("devices", []):
+        if device.get("name") == device_name:
+            deployed = device.get("deployed_version")
+            current = device.get("current_version")
+            return (deployed, current)
+    
+    return (None, None)
+
+# ============================================================================
 # ESPHOME INTERACTION/COMPILATION
 # ============================================================================
 
@@ -300,8 +336,8 @@ def get_esphome_devices() -> List[Dict]:
         # Get current version
         current_version = get_current_version(yaml_path)
         
-        # Get deployed version
-        deployed_version = get_deployed_version(yaml_path)
+        # Get deployed version from dashboard.json
+        deployed_version, _ = get_dashboard_versions(device_name)
         
         devices.append({
             "name": device_name,
@@ -345,25 +381,6 @@ def get_current_version(yaml_path: Path) -> Optional[str]:
     
     log_debug(f"Could not determine current version for {yaml_path.name}")
     return None
-
-def get_deployed_version(yaml_path: Path) -> Optional[str]:
-    """Get deployed version from .storage file"""
-    storage_dir = ESPHOME_DIR / ".storage"
-    device_name = yaml_path.stem
-    storage_file = storage_dir / f"{device_name}.json"
-    
-    if not storage_file.exists():
-        log_debug(f"No storage file for {device_name}")
-        return None
-    
-    try:
-        with storage_file.open("r", encoding="utf-8") as f:
-            storage_data = json.load(f)
-            deployed = storage_data.get("esphome_version")
-            return deployed
-    except Exception as e:
-        log_debug(f"Error reading storage for {device_name}: {e}")
-        return None
 
 def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
     """
@@ -449,9 +466,12 @@ def upload_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
     log_verbose("  ✓ Upload successful")
     return (True, "")
 
+# ============================================================================
+# REPAIR MODE - Dashboard Metadata Repair
+# ============================================================================
+
 def repair_dashboard_metadata(
-    devices: List[dict],
-    container: str,
+    devices: List[Dict],
     skip_existing: bool = True
 ) -> Tuple[int, int]:
     """
@@ -460,17 +480,17 @@ def repair_dashboard_metadata(
     
     Returns: (repaired_count, failed_count)
     """
-    log_section("Dashboard Metadata Repair Mode")
-    log("This mode compiles devices to populate dashboard.json metadata")
-    log("NO OTA uploads will be performed")
-    log("")
+    log_header("Dashboard Metadata Repair Mode")
+    log_quiet("This mode compiles devices to populate dashboard.json metadata")
+    log_quiet("NO OTA uploads will be performed")
+    log_quiet("")
     
     if skip_existing:
-        log("Will skip devices that already have metadata")
+        log_normal("Will skip devices that already have metadata")
     else:
-        log("Will recompile ALL devices regardless of existing metadata")
+        log_normal("Will recompile ALL devices regardless of existing metadata")
     
-    log("")
+    log_quiet("")
     
     repaired = 0
     failed = 0
@@ -479,58 +499,57 @@ def repair_dashboard_metadata(
     total = len(devices)
     
     for idx, dev in enumerate(devices, start=1):
-        if STOP_REQUESTED:
-            log("")
-            log("⚠ Stop requested during repair")
-            break
-        
         name = dev["name"]
-        yaml_name = dev["config"]
+        yaml_name = dev["config_file"]
         
-        log(f"[{idx}/{total}] Checking: {name}")
+        log_normal(f"[{idx}/{total}] Checking: {name}")
         
         # Check if metadata exists
-        deployed, current = read_dashboard_versions(name)
+        deployed, current = get_dashboard_versions(name)
         
         if skip_existing and deployed is not None and current is not None:
-            log(f"  ✓ Metadata exists: deployed={deployed}, current={current}")
+            log_verbose(f"  ✓ Metadata exists: deployed={deployed}, current={current}")
             skipped += 1
             continue
         
         # Compile to generate metadata
-        log(f"  → Compiling {yaml_name} to generate metadata...")
-        bin_path = compile_in_esphome_container(container, yaml_name, name)
+        log_normal(f"  → Compiling {yaml_name} to generate metadata...")
+        yaml_path = ESPHOME_DIR / yaml_name
         
-        if STOP_REQUESTED:
-            log("  ⚠ Stop requested")
-            break
+        # Use a minimal options dict for compilation (no stopping on errors during repair)
+        repair_opts = {
+            "stop_on_compilation_warning": False,
+            "stop_on_compilation_error": False,
+        }
         
-        if bin_path:
+        compile_ok, compile_error = compile_device(yaml_path, repair_opts)
+        
+        if compile_ok:
             # Verify metadata was created
-            deployed, current = read_dashboard_versions(name)
+            deployed, current = get_dashboard_versions(name)
             if deployed is not None or current is not None:
-                log(f"  ✓ Metadata generated: deployed={deployed}, current={current}")
+                log_normal(f"  ✓ Metadata generated: deployed={deployed}, current={current}")
                 repaired += 1
             else:
-                log(f"  ⚠ Compiled but metadata not populated")
+                log_normal(f"  ⚠ Compiled but metadata not populated")
                 failed += 1
         else:
-            log(f"  ✗ Compilation failed")
+            log_normal(f"  ✗ Compilation failed: {compile_error}")
             failed += 1
         
         # Small delay between devices
-        if idx < total and not STOP_REQUESTED:
-            time.sleep(1)
+        if idx < total:
+            time.sleep(0.5)
     
-    log("")
-    log_section("Repair Summary")
-    log(f"Total devices: {total}")
-    log(f"Metadata repaired: {repaired}")
-    log(f"Already had metadata: {skipped}")
-    log(f"Failed: {failed}")
+    log_quiet("")
+    log_header("Repair Summary")
+    log_quiet(f"Total devices: {total}")
+    log_quiet(f"Metadata repaired: {repaired}")
+    log_quiet(f"Already had metadata: {skipped}")
+    log_quiet(f"Failed: {failed}")
+    log_quiet("")
     
     return (repaired, failed)
-
 
 # ============================================================================
 # FILTERING & SELECTION
@@ -770,6 +789,37 @@ def main():
     log_header("Discovering Devices")
     devices = get_esphome_devices()
     log_normal(f"Discovered {len(devices)} ESPHome devices")
+    
+    # ============================================================================
+    # REPAIR MODE
+    # ============================================================================
+    
+    repair_mode = opts.get("repair_dashboard_metadata", False)
+    if repair_mode:
+        log_quiet("")
+        log_quiet("=" * 70)
+        log_quiet("REPAIR MODE ENABLED")
+        log_quiet("=" * 70)
+        log_quiet("")
+        
+        skip_existing = opts.get("repair_skip_existing_metadata", True)
+        repaired, failed = repair_dashboard_metadata(devices, skip_existing)
+        
+        log_quiet("")
+        log_quiet("=" * 70)
+        log_quiet("Repair mode complete.")
+        log_quiet("=" * 70)
+        log_quiet("")
+        log_quiet("Next steps:")
+        log_quiet("  1. Set 'repair_dashboard_metadata: false' in configuration")
+        log_quiet("  2. Run add-on normally for smart updates")
+        log_quiet("")
+        
+        return  # Exit after repair
+    
+    # ============================================================================
+    # NORMAL UPDATE MODE
+    # ============================================================================
     
     # Filter devices
     filtered_devices = filter_devices(devices, opts, progress)

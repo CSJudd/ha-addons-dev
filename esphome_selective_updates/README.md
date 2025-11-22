@@ -512,6 +512,211 @@ tail -f /config/esphome_smart_update.log
 
 Or download via **File Editor** add-on or Samba share.
 
+
+---
+
+## 🔧 Dashboard Metadata Repair
+
+### When Do You Need This?
+
+If you see this in your logs:
+
+```
+✗ device-name - no deployed version (update_when_no_deployed_version=false)
+```
+
+And **all or most devices** are being skipped, your ESPHome dashboard.json file is missing metadata.
+
+### Common Causes
+
+1. **ESPHome cleanup** - Deleted old configuration files
+2. **Fresh installation** - New ESPHome setup without version history
+3. **Dashboard corruption** - dashboard.json was deleted or corrupted
+4. **Storage migration** - Moved from old ESPHome storage format
+
+### How Repair Mode Works
+
+Repair mode:
+- ✅ Compiles each device once to generate metadata
+- ✅ Populates `deployed_version` and `current_version` in dashboard.json
+- ✅ **NO OTA uploads** - compile-only operation
+- ✅ Safe to run - doesn't modify devices
+- ✅ After completion, normal smart update logic works
+
+### Step-by-Step Repair Process
+
+#### 1. Enable Repair Mode
+
+Set these options in your add-on configuration:
+
+```yaml
+repair_dashboard_metadata: true
+repair_skip_existing_metadata: true
+log_level: normal  # or verbose for more details
+```
+
+**Configuration Options:**
+
+| Option | Description | Recommended |
+|--------|-------------|-------------|
+| `repair_dashboard_metadata` | Enable repair mode | `true` (one-time) |
+| `repair_skip_existing_metadata` | Skip devices with existing metadata | `true` (faster) |
+
+#### 2. Start the Add-on
+
+Click **Start** in the add-on Info tab.
+
+Expected output:
+
+```
+======================================================================
+ESPHome Selective Updates v2.0.6
+======================================================================
+
+======================================================================
+REPAIR MODE ENABLED
+======================================================================
+
+======================================================================
+Dashboard Metadata Repair Mode
+======================================================================
+This mode compiles devices to populate dashboard.json metadata
+NO OTA uploads will be performed
+
+Will skip devices that already have metadata
+
+[1/389] Checking: ai001
+  → Compiling ai001.yaml to generate metadata...
+  ✓ Metadata generated: deployed=2025.11.0, current=2025.11.0
+
+[2/389] Checking: ai002
+  → Compiling ai002.yaml to generate metadata...
+  ✓ Metadata generated: deployed=2025.11.0, current=2025.11.0
+
+...
+
+======================================================================
+Repair Summary
+======================================================================
+Total devices: 389
+Metadata repaired: 389
+Already had metadata: 0
+Failed: 0
+
+======================================================================
+Repair mode complete.
+======================================================================
+
+Next steps:
+  1. Set 'repair_dashboard_metadata: false' in configuration
+  2. Run add-on normally for smart updates
+```
+
+#### 3. Wait for Completion
+
+**Time estimates:**
+- **100 devices:** ~30-45 minutes
+- **200 devices:** ~1-1.5 hours
+- **389 devices:** ~2-3 hours
+
+This is compile-only (no uploads), so it's faster than full updates.
+
+#### 4. Disable Repair Mode
+
+After completion, set:
+
+```yaml
+repair_dashboard_metadata: false
+```
+
+#### 5. Run Normally
+
+Start the add-on again. It will now:
+- Read metadata from dashboard.json
+- Use smart update logic
+- Only update devices that actually need updates
+
+### Troubleshooting Repair Mode
+
+| Issue | Solution |
+|-------|----------|
+| Some devices failed to compile | Normal - check YAML syntax for those devices in ESPHome Dashboard |
+| Repair taking too long | Normal for large deployments - let it complete |
+| Want to stop repair | Stop the add-on - progress is saved, can resume |
+| Need to re-repair specific devices | Set `repair_skip_existing_metadata: false` to recompile everything |
+
+### After Repair
+
+Once metadata is repaired:
+1. Normal smart update logic works
+2. Future runs only update devices with version changes
+3. No need to run repair mode again (unless you clean ESPHome again)
+
+### Example: Repairing 389 Devices
+
+**Before repair:**
+```
+Total devices: 389
+Devices to process: 0
+Devices skipped: 389
+
+Skip reasons:
+  - no deployed version: 389
+```
+
+**During repair:**
+```
+[1/389] Checking: ai001
+  ✓ Metadata generated
+
+[2/389] Checking: ai002
+  ✓ Metadata generated
+
+...continuing through all 389 devices...
+```
+
+**After repair (next normal run):**
+```
+Total devices: 389
+Devices to process: 5  ← Only devices that actually need updates
+Devices skipped: 384
+
+Skip reasons:
+  - versions match: 384
+```
+
+### Advanced Repair Options
+
+#### Repair Only Specific Devices
+
+Combine repair mode with device filtering:
+
+```yaml
+repair_dashboard_metadata: true
+repair_skip_existing_metadata: true
+device_name_patterns:
+  - "ai*"      # Only AI devices
+  - "sp0*"     # Only SP0xx devices
+```
+
+#### Force Recompile Everything
+
+If you want to rebuild metadata for ALL devices (even those with existing metadata):
+
+```yaml
+repair_dashboard_metadata: true
+repair_skip_existing_metadata: false  # Recompile everything
+```
+
+⚠️ **Warning:** This recompiles ALL devices, taking significantly longer.
+
+#### Resume Interrupted Repair
+
+If repair is interrupted:
+1. Simply start the add-on again with repair mode enabled
+2. It will skip devices that already have metadata
+3. Continues from where it left off
+
 ---
 
 ## 🔧 Advanced Use Cases

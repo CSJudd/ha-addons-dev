@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+
+---
+## [2.0.6] - 2024-11-21
+
+### Added
+- **Dashboard Metadata Repair Mode**: New functionality to rebuild missing dashboard.json metadata
+  - `repair_dashboard_metadata` option - Enable one-time repair mode
+  - `repair_skip_existing_metadata` option - Skip devices that already have metadata
+  - Compile-only mode (no OTA uploads during repair)
+  - Automatically populates `deployed_version` and `current_version` in dashboard.json
+
+### Changed
+- Updated dashboard.json reading logic to properly extract version metadata
+- Improved device discovery to read from dashboard.json instead of legacy storage files
+
+### Fixed
+- Resolves issue where devices show "no deployed version" after ESPHome cleanup
+- Allows add-on to function after dashboard.json metadata loss
+- Provides recovery path for deployments with missing metadata
+
+### Use Case
+This release addresses scenarios where:
+- ESPHome configuration cleanup removed dashboard metadata
+- Fresh ESPHome installations lack version history
+- Dashboard.json was deleted or corrupted
+- Devices need metadata repopulation without full OTA updates
+
+### Migration Notes
+**If you see "no deployed version" errors for all devices:**
+
+1. Update to v2.0.6
+2. Set configuration:
+   ```yaml
+   repair_dashboard_metadata: true
+   repair_skip_existing_metadata: true
+   ```
+3. Start add-on (compiles all devices to generate metadata)
+4. Set `repair_dashboard_metadata: false`
+5. Run normally - smart update logic now functions correctly
+
+**Estimated time:** ~2-3 hours for 389 devices (compile-only, no uploads)
+
 ---
 ## [2.0.5] - 2024-11-21
 
