@@ -297,12 +297,14 @@ def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[in
         log_debug(error_msg)
         return (1, "", error_msg)
     
+    # Get the ESPHome command (detected at startup)
+    esphome_cmd = os.environ.get("ESPHOME_COMMAND", "esphome")
+    
     # Build the docker exec command
     cmd = [
         "docker", "exec", "-i",
         esphome_container,
-        "esphome"
-    ] + args
+    ] + esphome_cmd.split() + args
     
     log_debug(f"Running command: {' '.join(cmd)}")
     
@@ -314,12 +316,6 @@ def run_esphome_command(args: List[str], cwd: Optional[Path] = None) -> Tuple[in
             text=True,
             timeout=1800  # 30 minute timeout
         )
-        
-        # If we get "page not found", it's likely a Docker API error
-        if "page not found" in result.stderr.lower() or "page not found" in result.stdout.lower():
-            log_debug(f"Docker error - container may not exist: {esphome_container}")
-            log_debug(f"Stderr: {result.stderr}")
-            log_debug(f"Stdout: {result.stdout}")
         
         return (result.returncode, result.stdout, result.stderr)
     except subprocess.TimeoutExpired:
@@ -872,6 +868,50 @@ def main():
             sys.exit(1)
         
         log_verbose(f"✓ Docker connectivity verified")
+        
+        # Find the esphome executable in the container
+        log_verbose("Detecting ESPHome executable location...")
+        
+        # Try common locations
+        esphome_paths = [
+            "which esphome",
+            "ls /usr/local/bin/esphome",
+            "ls /usr/bin/esphome", 
+            "python3 -c 'import esphome; print(esphome.__file__)'",
+        ]
+        
+        esphome_found = False
+        for path_cmd in esphome_paths:
+            check_result = subprocess.run(
+                ["docker", "exec", esphome_container, "sh", "-c", path_cmd],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if check_result.returncode == 0 and check_result.stdout.strip():
+                log_verbose(f"✓ ESPHome found: {check_result.stdout.strip()}")
+                esphome_found = True
+                
+                # Store the working command for later use
+                if "which" in path_cmd:
+                    os.environ["ESPHOME_COMMAND"] = "esphome"
+                elif "python3" in path_cmd:
+                    os.environ["ESPHOME_COMMAND"] = "python3 -m esphome"
+                else:
+                    os.environ["ESPHOME_COMMAND"] = check_result.stdout.strip()
+                break
+        
+        if not esphome_found:
+            log_quiet("")
+            log_quiet("ERROR: Could not find esphome executable in container")
+            log_quiet(f"Container: {esphome_container}")
+            log_quiet("Tried locations:")
+            for p in esphome_paths:
+                log_quiet(f"  - {p}")
+            log_quiet("")
+            log_quiet("This might be an incompatible ESPHome container version.")
+            sys.exit(1)
+            
     except Exception as e:
         log_quiet("")
         log_quiet(f"ERROR: Failed to verify Docker connectivity: {e}")
