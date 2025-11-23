@@ -119,7 +119,7 @@ log_info "Setting up environment..."
 
 # Export add-on version for Python script
 # Try Bashio first, fall back to Dockerfile version
-export ADDON_VERSION="${BASHIO_ADDON_VERSION:-2.0.7}"
+export ADDON_VERSION="${BASHIO_ADDON_VERSION:-2.0.8}"
 
 log_info "Add-on version: ${ADDON_VERSION}"
 
