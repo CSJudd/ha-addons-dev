@@ -29,7 +29,8 @@
     "dry_run": false,
     "log_level": "normal",
     "repair_dashboard_metadata": false,
-    "repair_skip_existing_metadata": true
+    "repair_skip_existing_metadata": true,
+    "debug_test_single_device": ""
   },
   "schema": {
     "device_name_patterns": ["str?"],
@@ -49,6 +50,7 @@
     "dry_run": "bool",
     "log_level": "list(quiet|normal|verbose|debug)",
     "repair_dashboard_metadata": "bool",
-    "repair_skip_existing_metadata": "bool"
+    "repair_skip_existing_metadata": "bool",
+    "debug_test_single_device": "str?"
   }
 }

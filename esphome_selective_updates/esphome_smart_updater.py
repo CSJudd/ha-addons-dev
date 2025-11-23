@@ -44,6 +44,7 @@ DEFAULTS = {
     "log_level": "normal",
     "repair_dashboard_metadata": False,
     "repair_skip_existing_metadata": True,
+    "debug_test_single_device": "",  # Set to device name to test just one device
 }
 
 # Log level mapping
@@ -414,11 +415,10 @@ def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
         ["compile", container_path]
     )
     
+    # ALWAYS log compilation output in debug mode
     log_debug(f"Compilation return code: {returncode}")
-    if stdout:
-        log_debug(f"Compilation stdout:\n{stdout}")
-    if stderr:
-        log_debug(f"Compilation stderr:\n{stderr}")
+    log_debug(f"Compilation stdout:\n{stdout}")
+    log_debug(f"Compilation stderr:\n{stderr}")
     
     # Check for errors first
     if returncode != 0:
@@ -428,16 +428,41 @@ def compile_device(yaml_path: Path, opts: Dict) -> Tuple[bool, str]:
         # Check for specific error types
         if "page not found" in combined_output.lower():
             error_msg = "Docker container error - check ESPHome container is running"
+            log_normal(f"  ✗ {error_msg}")
+            log_normal(f"     Docker stderr: {stderr[:200]}")
         elif "no such file" in combined_output.lower():
             error_msg = f"YAML file not found in container: {container_path}"
-        elif stderr:
-            # Extract first meaningful error line
-            for line in stderr.split("\n"):
-                if "ERROR" in line.upper() or "Error" in line:
-                    error_msg = line.strip()
-                    break
-        
-        log_normal(f"  ✗ {error_msg}")
+            log_normal(f"  ✗ {error_msg}")
+        elif "Error" in combined_output or "ERROR" in combined_output:
+            # Extract ALL error lines, not just the first
+            error_lines = []
+            for line in combined_output.split("\n"):
+                if "ERROR" in line.upper() or "error" in line.lower():
+                    error_lines.append(line.strip())
+            
+            if error_lines:
+                error_msg = error_lines[0]  # Use first error as main message
+                log_normal(f"  ✗ {error_msg}")
+                # Show additional errors if verbose
+                if len(error_lines) > 1:
+                    log_verbose("  Additional errors:")
+                    for err in error_lines[1:5]:  # Show up to 5 errors
+                        log_verbose(f"    - {err}")
+            else:
+                # No specific error found, show raw output
+                log_normal(f"  ✗ Compilation failed")
+                log_normal(f"     Return code: {returncode}")
+                if stderr:
+                    log_normal(f"     Stderr: {stderr[:500]}")
+                if stdout:
+                    log_verbose(f"     Stdout: {stdout[:500]}")
+        else:
+            # Generic failure - show what we have
+            log_normal(f"  ✗ Compilation failed (return code: {returncode})")
+            if stderr:
+                log_normal(f"     Stderr: {stderr[:500]}")
+            if stdout and not stderr:
+                log_normal(f"     Stdout: {stdout[:500]}")
         
         if opts.get("stop_on_compilation_error", True):
             return (False, error_msg)
@@ -864,6 +889,59 @@ def main():
     log_normal(f"Discovered {len(devices)} ESPHome devices")
     
     # ============================================================================
+    # DEBUG TEST MODE - Test single device with full output
+    # ============================================================================
+    
+    test_device = opts.get("debug_test_single_device", "")
+    if test_device:
+        log_quiet("")
+        log_quiet("=" * 70)
+        log_quiet(f"DEBUG TEST MODE - Testing device: {test_device}")
+        log_quiet("=" * 70)
+        log_quiet("")
+        
+        # Force debug logging
+        set_log_level("debug")
+        
+        # Find the device
+        target = None
+        for dev in devices:
+            if dev["name"] == test_device or dev["config_file"].startswith(test_device):
+                target = dev
+                break
+        
+        if not target:
+            log_quiet(f"ERROR: Device '{test_device}' not found")
+            log_quiet("Available devices:")
+            for dev in devices[:10]:
+                log_quiet(f"  - {dev['name']} ({dev['config_file']})")
+            sys.exit(1)
+        
+        log_quiet(f"Found device: {target['name']}")
+        log_quiet(f"Config file: {target['config_file']}")
+        log_quiet("")
+        
+        # Test compilation
+        yaml_path = ESPHOME_DIR / target["config_file"]
+        test_opts = {"stop_on_compilation_error": False}
+        
+        log_quiet("Testing compilation with full debug output:")
+        log_quiet("-" * 70)
+        success, error = compile_device(yaml_path, test_opts)
+        log_quiet("-" * 70)
+        
+        if success:
+            log_quiet("✓ Compilation SUCCEEDED")
+        else:
+            log_quiet(f"✗ Compilation FAILED: {error}")
+        
+        log_quiet("")
+        log_quiet("Check the output above for the actual error details")
+        log_quiet("Once you see the error, you can fix the YAML or disable this test mode")
+        
+        return  # Exit after test
+    
+    # ============================================================================
     # REPAIR MODE
     # ============================================================================
     
@@ -875,8 +953,17 @@ def main():
         log_quiet("=" * 70)
         log_quiet("")
         
+        # Force verbose logging during repair to see errors
+        original_log_level = CURRENT_LOG_LEVEL
+        set_log_level("verbose")
+        log_normal("Temporarily setting log level to VERBOSE for repair diagnostics")
+        log_normal("")
+        
         skip_existing = opts.get("repair_skip_existing_metadata", True)
         repaired, failed = repair_dashboard_metadata(devices, skip_existing)
+        
+        # Restore original log level
+        set_log_level(opts.get("log_level", "normal"))
         
         log_quiet("")
         log_quiet("=" * 70)
