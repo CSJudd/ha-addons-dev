@@ -265,63 +265,109 @@ def read_dashboard_json() -> Dict:
         log_debug(f"Error reading dashboard.json: {e}")
         return {}
 
-def get_dashboard_versions(device_name: str) -> Tuple[Optional[str], Optional[str]]:
+def get_dashboard_versions(device_name: str, yaml_name: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    Get deployed_version and current_version from dashboard.json
+    Get deployed_version from ESPHome storage
+    ESPHome stores device metadata in /config/esphome/.esphome/storage/[yaml-name].json
     Returns: (deployed_version, current_version)
     """
-    dashboard = read_dashboard_json()
+    # ESPHome uses .esphome/storage directory with [yaml-name].json files
+    storage_dir = ESPHOME_DIR / ".esphome" / "storage"
+    storage_file = storage_dir / f"{yaml_name}.json"
     
-    for device in dashboard.get("devices", []):
-        if device.get("name") == device_name:
-            deployed = device.get("deployed_version")
-            current = device.get("current_version")
-            return (deployed, current)
+    if not storage_file.exists():
+        log_debug(f"No storage file for {yaml_name}")
+        return (None, None)
     
-    return (None, None)
+    try:
+        with storage_file.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        # ESPHome storage format
+        deployed = data.get("esphome_version")  # This is the deployed version
+        current = data.get("esphome_version")   # Same for current
+        
+        log_debug(f"Storage file for {yaml_name}: esphome_version={deployed}")
+        return (deployed, current)
+        
+    except Exception as e:
+        log_debug(f"Error reading storage file for {yaml_name}: {e}")
+        return (None, None)
 
-def update_dashboard_metadata(device_name: str, version: str) -> bool:
+def update_dashboard_metadata(device_name: str, yaml_name: str, version: str) -> bool:
     """
-    Update or create metadata for a device in dashboard.json
+    Update metadata in BOTH locations:
+    1. /config/esphome/.esphome/storage/[yaml-name].json (ESPHome's format)
+    2. /config/esphome/.esphome/dashboard.json (our tracking)
+    
     Returns: True if successful, False otherwise
     """
+    success = True
+    
+    # Update ESPHome storage file (the important one)
+    storage_dir = ESPHOME_DIR / ".esphome" / "storage"
+    storage_file = storage_dir / f"{yaml_name}.json"
+    
     try:
-        # Read current dashboard
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Read existing storage or create new
+        if storage_file.exists():
+            with storage_file.open("r", encoding="utf-8") as f:
+                storage_data = json.load(f)
+        else:
+            storage_data = {
+                "storage_version": 1,
+                "name": device_name,
+                "comment": "Created by ESPHome Selective Updates"
+            }
+        
+        # Update version
+        storage_data["esphome_version"] = version
+        
+        # Write back
+        with storage_file.open("w", encoding="utf-8") as f:
+            json.dump(storage_data, f, indent=2)
+        
+        log_debug(f"Updated storage file {yaml_name}.json: {version}")
+        
+    except Exception as e:
+        log_debug(f"Failed to update storage file for {yaml_name}: {e}")
+        success = False
+    
+    # Also update dashboard.json for our own tracking
+    try:
         dashboard = read_dashboard_json()
         
-        # Ensure devices array exists
         if "devices" not in dashboard:
             dashboard["devices"] = []
         
-        # Find or create device entry
         device_found = False
         for device in dashboard["devices"]:
             if device.get("name") == device_name:
-                # Update existing device
                 device["deployed_version"] = version
                 device["current_version"] = version
                 device_found = True
                 break
         
         if not device_found:
-            # Add new device entry
             dashboard["devices"].append({
                 "name": device_name,
                 "deployed_version": version,
                 "current_version": version
             })
         
-        # Write back to file
         DASHBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
         with DASHBOARD_FILE.open("w", encoding="utf-8") as f:
             json.dump(dashboard, f, indent=2)
         
         log_debug(f"Updated dashboard.json for {device_name}: {version}")
-        return True
         
     except Exception as e:
         log_debug(f"Failed to update dashboard.json: {e}")
-        return False
+        # Don't set success=False - storage file is more important
+    
+    return success
 
 # ============================================================================
 # ESPHOME INTERACTION/COMPILATION
@@ -390,8 +436,8 @@ def get_esphome_devices() -> List[Dict]:
             log_debug(f"Skipping {yaml_name}: no device name found")
             continue
         
-        # Get deployed version from dashboard.json
-        deployed_version, _ = get_dashboard_versions(device_name)
+        # Get deployed version from storage file
+        deployed_version, _ = get_dashboard_versions(device_name, yaml_name)
         
         devices.append({
             "name": device_name,
@@ -597,19 +643,37 @@ def repair_dashboard_metadata(
     
     total = len(devices)
     
+    # Debug: Show what's in dashboard.json
+    log_debug("Reading dashboard.json structure...")
+    dashboard = read_dashboard_json()
+    if "devices" in dashboard:
+        log_debug(f"  Dashboard has {len(dashboard['devices'])} device entries")
+        if dashboard['devices'] and len(dashboard['devices']) > 0:
+            # Show first entry as example
+            first_device = dashboard['devices'][0]
+            log_debug(f"  Example entry keys: {list(first_device.keys())}")
+            log_debug(f"  Example entry: name='{first_device.get('name')}', deployed={first_device.get('deployed_version')}")
+    else:
+        log_debug("  Dashboard has no 'devices' array")
+    
     for idx, dev in enumerate(devices, start=1):
         name = dev["name"]
         yaml_name = dev["config_file"]
         
         log_normal(f"[{idx}/{total}] Checking: {name}")
         
-        # Check if metadata exists
-        deployed, current = get_dashboard_versions(name)
+        # Check if metadata exists in storage file
+        deployed, current = get_dashboard_versions(name, yaml_name)
+        
+        log_debug(f"  Storage lookup for '{yaml_name}': deployed={deployed}, current={current}")
         
         if skip_existing and deployed is not None and current is not None:
             log_verbose(f"  ✓ Metadata exists: deployed={deployed}, current={current}")
             skipped += 1
             continue
+        
+        if skip_existing:
+            log_verbose(f"  → No metadata found, will compile")
         
         # Compile to generate metadata
         log_normal(f"  → Compiling {yaml_name} to generate metadata...")
@@ -627,13 +691,13 @@ def repair_dashboard_metadata(
             # Use the ESPHome version detected at startup
             esphome_version = os.environ.get("ESPHOME_VERSION", "unknown")
             
-            # Write metadata directly to dashboard.json
+            # Write metadata to storage file
             if esphome_version != "unknown":
-                if update_dashboard_metadata(name, esphome_version):
+                if update_dashboard_metadata(name, yaml_name, esphome_version):
                     log_normal(f"  ✓ Metadata generated: deployed={esphome_version}, current={esphome_version}")
                     repaired += 1
                 else:
-                    log_normal(f"  ⚠ Compiled but failed to update dashboard.json")
+                    log_normal(f"  ⚠ Compiled but failed to update storage file")
                     failed += 1
             else:
                 log_normal(f"  ⚠ Compiled but ESPHome version unknown")
@@ -827,10 +891,10 @@ def process_devices(devices: List[Dict], opts: Dict, progress: Dict):
         # Success
         log_normal(f"  ✓ Successfully updated {name}")
         
-        # Update dashboard metadata
+        # Update storage metadata
         esphome_version = os.environ.get("ESPHOME_VERSION", "unknown")
         if esphome_version != "unknown":
-            update_dashboard_metadata(name, esphome_version)
+            update_dashboard_metadata(name, config, esphome_version)
         
         progress["done"].append(name)
         save_progress(progress)
