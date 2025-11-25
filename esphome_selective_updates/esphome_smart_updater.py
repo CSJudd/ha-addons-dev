@@ -899,6 +899,64 @@ def process_devices(devices: List[Dict], opts: Dict, progress: Dict):
         progress["done"].append(name)
         save_progress(progress)
 
+def process_devices_upload_only(devices: List[Dict], opts: Dict, progress: Dict):
+    """Process devices with upload only (skip compilation)"""
+    if not devices:
+        log_normal("")
+        log_normal("No devices to process.")
+        return
+    
+    log_header("Uploading Pre-Compiled Binaries")
+    
+    total = len(devices)
+    dry_run = opts.get("dry_run", False)
+    
+    if dry_run:
+        log_normal("DRY RUN MODE - No actual uploads will occur")
+        log_normal("")
+    
+    for idx, device in enumerate(devices, start=1):
+        name = device["name"]
+        config = device["config_file"]
+        
+        log_normal("")
+        log_normal(f"[{idx}/{total}] Uploading: {name}")
+        log_verbose(f"  Config: {config}")
+        
+        yaml_path = ESPHOME_DIR / config
+        
+        if dry_run:
+            log_normal("  → [DRY RUN] Would upload pre-compiled binary")
+            progress["done"].append(name)
+            save_progress(progress)
+            continue
+        
+        # Upload only (no compilation)
+        log_normal(f"  → Uploading to device (using existing binary)...")
+        upload_ok, upload_error = upload_device(yaml_path, opts)
+        
+        if not upload_ok:
+            log_normal(f"  ✗ Upload failed: {upload_error}")
+            progress["failed"].append(name)
+            save_progress(progress)
+            
+            if opts.get("stop_on_upload_error", True):
+                log_normal("")
+                log_normal("Stopping due to upload error (stop_on_upload_error=true)")
+                break
+            continue
+        
+        # Success
+        log_normal(f"  ✓ Successfully uploaded {name}")
+        
+        # Update storage metadata
+        esphome_version = os.environ.get("ESPHOME_VERSION", "unknown")
+        if esphome_version != "unknown":
+            update_dashboard_metadata(name, config, esphome_version)
+        
+        progress["done"].append(name)
+        save_progress(progress)
+
 # ============================================================================
 # SUMMARY & REPORTING
 # ============================================================================
@@ -1130,14 +1188,19 @@ def main():
         return  # Exit after test
     
     # ============================================================================
-    # REPAIR MODE
+    # MODE DETECTION
     # ============================================================================
     
-    repair_mode = opts.get("repair_dashboard_metadata", False)
-    if repair_mode:
+    mode = opts.get("mode", "normal")
+    
+    # ============================================================================
+    # REPAIR MODE - Rebuild Metadata
+    # ============================================================================
+    
+    if mode == "repair":
         log_quiet("")
         log_quiet("=" * 70)
-        log_quiet("REPAIR MODE ENABLED")
+        log_quiet("REPAIR MODE - Rebuilding Metadata")
         log_quiet("=" * 70)
         log_quiet("")
         
@@ -1147,8 +1210,8 @@ def main():
         log_normal("Temporarily setting log level to VERBOSE for repair diagnostics")
         log_normal("")
         
-        skip_existing = opts.get("repair_skip_existing_metadata", True)
-        repaired, failed = repair_dashboard_metadata(devices, skip_existing)
+        # In repair mode, always skip existing metadata
+        repaired, failed = repair_dashboard_metadata(devices, skip_existing=True)
         
         # Restore original log level
         set_log_level(opts.get("log_level", "normal"))
@@ -1159,20 +1222,50 @@ def main():
         log_quiet("=" * 70)
         log_quiet("")
         log_quiet("Next steps:")
-        log_quiet("  1. Set 'repair_dashboard_metadata: false' in configuration")
-        log_quiet("  2. Run add-on normally for smart updates")
+        log_quiet("  1. Set mode to 'upload_only' to install the compiled binaries")
+        log_quiet("  2. Or use 'normal' mode for future smart updates")
         log_quiet("")
         
         return  # Exit after repair
     
     # ============================================================================
-    # NORMAL UPDATE MODE
+    # UPLOAD ONLY MODE - Install Pre-Compiled Binaries
     # ============================================================================
+    
+    if mode == "upload_only":
+        log_quiet("")
+        log_quiet("=" * 70)
+        log_quiet("UPLOAD ONLY MODE - Installing Pre-Compiled Binaries")
+        log_quiet("=" * 70)
+        log_quiet("")
+        log_normal("Skipping compilation, using existing binaries from repair mode")
+        log_normal("")
+        
+        # Filter devices
+        filtered_devices = filter_devices(devices, opts, progress)
+        
+        # Process devices (upload only)
+        process_devices_upload_only(filtered_devices, opts, progress)
+        
+        # Print summary
+        print_summary(devices, filtered_devices, progress, opts)
+        
+        return  # Exit after upload
+    
+    # ============================================================================
+    # NORMAL MODE - Smart Updates
+    # ============================================================================
+    
+    log_quiet("")
+    log_quiet("=" * 70)
+    log_quiet("NORMAL MODE - Smart Updates")
+    log_quiet("=" * 70)
+    log_quiet("")
     
     # Filter devices
     filtered_devices = filter_devices(devices, opts, progress)
     
-    # Process devices
+    # Process devices (compile + upload)
     process_devices(filtered_devices, opts, progress)
     
     # Print summary

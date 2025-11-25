@@ -12,45 +12,75 @@
   "host_network": true,
   "map": ["config:rw"],
   "options": {
+    "mode": "normal",
     "device_name_patterns": [],
     "skip_device_name_patterns": [],
-    "yaml_name_patterns": [],
-    "skip_yaml_name_patterns": [],
+    "log_level": "normal",
     "update_when_no_deployed_version": false,
     "update_when_version_matches": false,
-    "clear_progress_on_start": false,
-    "clear_progress_now": false,
-    "clear_log_on_start": false,
-    "clear_log_on_version_change": true,
-    "clear_log_now": false,
-    "stop_on_compilation_warning": false,
+    "dry_run": false,
     "stop_on_compilation_error": true,
     "stop_on_upload_error": true,
-    "dry_run": false,
-    "log_level": "normal",
-    "repair_dashboard_metadata": false,
-    "repair_skip_existing_metadata": true,
-    "debug_test_single_device": ""
+    "clear_log_on_start": false,
+    "clear_progress_on_start": false
   },
   "schema": {
-    "device_name_patterns": ["str?"],
-    "skip_device_name_patterns": ["str?"],
-    "yaml_name_patterns": ["str?"],
-    "skip_yaml_name_patterns": ["str?"],
-    "update_when_no_deployed_version": "bool",
-    "update_when_version_matches": "bool",
-    "clear_progress_on_start": "bool",
-    "clear_progress_now": "bool",
-    "clear_log_on_start": "bool",
-    "clear_log_on_version_change": "bool",
-    "clear_log_now": "bool",
-    "stop_on_compilation_warning": "bool",
-    "stop_on_compilation_error": "bool",
-    "stop_on_upload_error": "bool",
-    "dry_run": "bool",
-    "log_level": "list(quiet|normal|verbose|debug)",
-    "repair_dashboard_metadata": "bool",
-    "repair_skip_existing_metadata": "bool",
-    "debug_test_single_device": "str?"
+    "mode": {
+      "type": "list",
+      "options": [
+        {"value": "normal", "label": "Normal - Smart updates (compile + upload only changed devices)"},
+        {"value": "repair", "label": "Repair - Rebuild metadata (compile only, no upload)"},
+        {"value": "upload_only", "label": "Upload Only - Use existing binaries (skip compile, just upload)"}
+      ],
+      "description": "Operating mode: Normal for regular updates, Repair to fix metadata, Upload Only to install pre-compiled binaries"
+    },
+    "device_name_patterns": {
+      "type": "list",
+      "optional": true,
+      "description": "Include only devices matching these patterns (e.g., 'ai*', 'bedroom-*'). Leave empty for all devices."
+    },
+    "skip_device_name_patterns": {
+      "type": "list",
+      "optional": true,
+      "description": "Exclude devices matching these patterns (e.g., 'test-*', 'offline-*'). Applied after include patterns."
+    },
+    "log_level": {
+      "type": "list",
+      "options": [
+        {"value": "quiet", "label": "Quiet - Minimal output (~50 lines for 389 devices)"},
+        {"value": "normal", "label": "Normal - Standard operation (~200 lines)"},
+        {"value": "verbose", "label": "Verbose - Detailed info (~1000 lines)"},
+        {"value": "debug", "label": "Debug - Everything (use for troubleshooting)"}
+      ],
+      "description": "Log verbosity in Supervisor logs. Full logs always saved to /config/esphome_smart_update.log"
+    },
+    "update_when_no_deployed_version": {
+      "type": "bool",
+      "description": "Update devices with no deployed version in metadata (usually new devices)"
+    },
+    "update_when_version_matches": {
+      "type": "bool",
+      "description": "Force update even when versions match (useful after repair mode or for bulk reinstalls)"
+    },
+    "dry_run": {
+      "type": "bool",
+      "description": "Preview what would be updated without actually doing it"
+    },
+    "stop_on_compilation_error": {
+      "type": "bool",
+      "description": "Stop entire process if any device fails to compile"
+    },
+    "stop_on_upload_error": {
+      "type": "bool",
+      "description": "Stop entire process if any device fails to upload"
+    },
+    "clear_log_on_start": {
+      "type": "bool",
+      "description": "Clear the log file every time the add-on starts"
+    },
+    "clear_progress_on_start": {
+      "type": "bool",
+      "description": "Clear progress tracking every time the add-on starts (forces restart from device #1)"
+    }
   }
 }
