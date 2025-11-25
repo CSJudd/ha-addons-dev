@@ -12,6 +12,7 @@
   "host_network": true,
   "map": ["config:rw"],
   "options": {
+    "mode": "normal",
     "device_name_patterns": [],
     "skip_device_name_patterns": [],
     "yaml_name_patterns": [],
@@ -33,6 +34,7 @@
 
   },
   "schema": {
+    "mode": "list(normal|repair|upload_only)",
     "device_name_patterns": ["str?"],
     "skip_device_name_patterns": ["str?"],
     "yaml_name_patterns": ["str?"],

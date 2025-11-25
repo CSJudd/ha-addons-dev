@@ -26,6 +26,7 @@ PROGRESS_FILE = CONFIG_DIR / "esphome_smart_update_progress.json"
 LOG_FILE = CONFIG_DIR / "esphome_smart_update.log"
 
 DEFAULTS = {
+    "mode": "normal",
     "device_name_patterns": [],
     "skip_device_name_patterns": [],
     "yaml_name_patterns": [],
