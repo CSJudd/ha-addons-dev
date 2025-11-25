@@ -280,6 +280,49 @@ def get_dashboard_versions(device_name: str) -> Tuple[Optional[str], Optional[st
     
     return (None, None)
 
+def update_dashboard_metadata(device_name: str, version: str) -> bool:
+    """
+    Update or create metadata for a device in dashboard.json
+    Returns: True if successful, False otherwise
+    """
+    try:
+        # Read current dashboard
+        dashboard = read_dashboard_json()
+        
+        # Ensure devices array exists
+        if "devices" not in dashboard:
+            dashboard["devices"] = []
+        
+        # Find or create device entry
+        device_found = False
+        for device in dashboard["devices"]:
+            if device.get("name") == device_name:
+                # Update existing device
+                device["deployed_version"] = version
+                device["current_version"] = version
+                device_found = True
+                break
+        
+        if not device_found:
+            # Add new device entry
+            dashboard["devices"].append({
+                "name": device_name,
+                "deployed_version": version,
+                "current_version": version
+            })
+        
+        # Write back to file
+        DASHBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with DASHBOARD_FILE.open("w", encoding="utf-8") as f:
+            json.dump(dashboard, f, indent=2)
+        
+        log_debug(f"Updated dashboard.json for {device_name}: {version}")
+        return True
+        
+    except Exception as e:
+        log_debug(f"Failed to update dashboard.json: {e}")
+        return False
+
 # ============================================================================
 # ESPHOME INTERACTION/COMPILATION
 # ============================================================================
@@ -335,6 +378,9 @@ def get_esphome_devices() -> List[Dict]:
     yaml_files = sorted(ESPHOME_DIR.glob("*.yaml"))
     log_verbose(f"Scanning {len(yaml_files)} YAML configuration files...")
     
+    # Use the ESPHome version detected at startup for all devices
+    esphome_version = os.environ.get("ESPHOME_VERSION", "unknown")
+    
     for yaml_path in yaml_files:
         yaml_name = yaml_path.name
         
@@ -344,20 +390,17 @@ def get_esphome_devices() -> List[Dict]:
             log_debug(f"Skipping {yaml_name}: no device name found")
             continue
         
-        # Get current version
-        current_version = get_current_version(yaml_path)
-        
         # Get deployed version from dashboard.json
         deployed_version, _ = get_dashboard_versions(device_name)
         
         devices.append({
             "name": device_name,
             "config_file": yaml_name,
-            "current_version": current_version,
+            "current_version": esphome_version,  # All devices use same ESPHome version
             "deployed_version": deployed_version,
         })
         
-        log_debug(f"Device: {device_name} | Config: {yaml_name} | Current: {current_version or 'unknown'} | Deployed: {deployed_version or 'unknown'}")
+        log_debug(f"Device: {device_name} | Config: {yaml_name} | Current: {esphome_version} | Deployed: {deployed_version or 'unknown'}")
     
     return devices
 
@@ -581,13 +624,19 @@ def repair_dashboard_metadata(
         compile_ok, compile_error = compile_device(yaml_path, repair_opts)
         
         if compile_ok:
-            # Verify metadata was created
-            deployed, current = get_dashboard_versions(name)
-            if deployed is not None or current is not None:
-                log_normal(f"  ✓ Metadata generated: deployed={deployed}, current={current}")
-                repaired += 1
+            # Use the ESPHome version detected at startup
+            esphome_version = os.environ.get("ESPHOME_VERSION", "unknown")
+            
+            # Write metadata directly to dashboard.json
+            if esphome_version != "unknown":
+                if update_dashboard_metadata(name, esphome_version):
+                    log_normal(f"  ✓ Metadata generated: deployed={esphome_version}, current={esphome_version}")
+                    repaired += 1
+                else:
+                    log_normal(f"  ⚠ Compiled but failed to update dashboard.json")
+                    failed += 1
             else:
-                log_normal(f"  ⚠ Compiled but metadata not populated")
+                log_normal(f"  ⚠ Compiled but ESPHome version unknown")
                 failed += 1
         else:
             log_normal(f"  ✗ Compilation failed: {compile_error}")
@@ -777,6 +826,12 @@ def process_devices(devices: List[Dict], opts: Dict, progress: Dict):
         
         # Success
         log_normal(f"  ✓ Successfully updated {name}")
+        
+        # Update dashboard metadata
+        esphome_version = os.environ.get("ESPHOME_VERSION", "unknown")
+        if esphome_version != "unknown":
+            update_dashboard_metadata(name, esphome_version)
+        
         progress["done"].append(name)
         save_progress(progress)
 
@@ -911,6 +966,35 @@ def main():
             log_quiet("")
             log_quiet("This might be an incompatible ESPHome container version.")
             sys.exit(1)
+        
+        # Get ESPHome version and store globally
+        log_verbose("Detecting ESPHome version...")
+        esphome_cmd = os.environ.get("ESPHOME_COMMAND", "esphome")
+        version_result = subprocess.run(
+            ["docker", "exec", esphome_container] + esphome_cmd.split() + ["version"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if version_result.returncode == 0:
+            # Parse version from output
+            for line in version_result.stdout.split("\n"):
+                if "Version:" in line or "version" in line.lower():
+                    version = line.split(":")[-1].strip() if ":" in line else line.strip()
+                    # Remove any "Version" prefix
+                    version = version.replace("Version", "").replace("version", "").strip()
+                    if version and version[0].isdigit():
+                        os.environ["ESPHOME_VERSION"] = version
+                        log_verbose(f"✓ ESPHome version: {version}")
+                        break
+        
+        if "ESPHOME_VERSION" not in os.environ:
+            log_quiet("")
+            log_quiet("WARNING: Could not determine ESPHome version")
+            log_quiet("Metadata repair may not populate version correctly")
+            # Set a placeholder
+            os.environ["ESPHOME_VERSION"] = "unknown"
             
     except Exception as e:
         log_quiet("")
