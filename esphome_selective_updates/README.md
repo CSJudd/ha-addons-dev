@@ -8,11 +8,11 @@
 
 ### The Problem
 
-ESPHome's built-in "Update All" button has a critical flaw:
+ESPHome's built-in "Update All" button has critical flaws:
 
 - ❌ **No intelligence** - Recompiles ALL devices, even ones already updated
 - ❌ **No resume** - If interrupted at device #200, starts over from #1
-- ❌ **Wastes time** - Takes 10+ hours for 375 devices when only 5 need updates
+- ❌ **Wastes time** - Takes 10+ hours for 389 devices when only 5 need updates
 - ❌ **No offline detection** - Tries to update unreachable devices and fails
 - ❌ **Floods logs** - Thousands of log lines make troubleshooting impossible
 
@@ -21,13 +21,13 @@ ESPHome's built-in "Update All" button has a critical flaw:
 This add-on fixes ESPHome's missing functionality:
 
 - ✅ **Smart updates** - Only compiles devices where `deployed_version ≠ current_version`
+- ✅ **Three operating modes** - Normal, Repair, Upload Only
 - ✅ **Resume capability** - Picks up exactly where it left off if interrupted
-- ✅ **Offline detection** - Pings devices first, skips unreachable ones
 - ✅ **Progress tracking** - Detailed logging and state persistence
-- ✅ **Efficiency** - 15 minutes instead of 10 hours for large deployments
+- ✅ **Efficiency** - Minutes instead of hours for large deployments
 - ✅ **Manageable logs** - Configurable log levels keep Supervisor logs clean
 
-**Real-world results:** Updates 375 devices in ~30 minutes instead of 10+ hours, with logs you can actually read.
+**Real-world results:** Updates 389 devices in ~30 minutes instead of 10+ hours, with logs you can actually read.
 
 ---
 
@@ -79,24 +79,39 @@ Yes, because this add-on:
 3. Turn it **OFF**
 4. Restart the add-on
 
-**Note:** This is a documented limitation until ESPHome adds a native compile API (which we're requesting - see below).
-
 ---
 
 ## 🚀 Features
 
-- **Smart Updates** – Only updates devices where deployed_version ≠ current_version
+### Three Operating Modes
+
+**Normal Mode** - Smart updates for everyday use
+- Only updates devices where deployed_version ≠ current_version
+- Compiles and uploads changed devices
+- Fast: processes only what's needed
+
+**Repair Mode** - Rebuild metadata (one-time setup)
+- Compiles all devices to populate storage files
+- **NO OTA uploads** - compile-only
+- Fixes missing metadata after ESPHome cleanup
+
+**Upload Only Mode** - Install pre-compiled binaries
+- Uses existing compiled binaries
+- Skips compilation entirely
+- Just performs OTA uploads
+- Perfect after repair mode completes
+
+### Additional Features
+
 - **Configurable Logging** – Control log verbosity (quiet/normal/verbose/debug)
-- **Offline Detection** – Pings devices before updating, skips offline devices
 - **Resume Capability** – Tracks progress, can resume if interrupted
 - **Dry Run Mode** – Preview what would be updated without actually updating
-- **Batch Control** – Limit updates per run, whitelist specific devices
-- **Comprehensive Logging** – Logs to `/config/esphome_smart_update.log` with full details
+- **Device Filtering** – Process only specific devices or exclude problematic ones
+- **Comprehensive Logging** – Full logs saved to `/config/esphome_smart_update.log`
 - **Clean Supervisor Logs** – Manageable output in Home Assistant Logs tab
 - **Integration Ready** – Trigger from Home Assistant automations or scripts
-- **Bulk Processing** – Efficiently handles 375+ devices
-- **Safe Compilation** – Builds inside the ESPHome add-on (no toolchain issues)
-- **Graceful Stop** – Handles Supervisor stop signals, preserves progress
+- **Bulk Processing** – Efficiently handles 389+ devices
+- **Graceful Stop** – Handles interruptions, preserves progress
 
 ---
 
@@ -106,7 +121,6 @@ Yes, because this add-on:
 - Official **ESPHome** add-on installed and running
 - Supervisor Docker socket access (`docker_api: true`, `hassio_role: "manager"`)
 - **Protection Mode OFF** (see above)
-- Correct ESPHome container name (default: `addon_5c53de3b_esphome`)
 
 ---
 
@@ -127,57 +141,34 @@ Yes, because this add-on:
 
 ### Step 3 – Configure
 
+The add-on now has a **user-friendly configuration interface** with dropdown menus and help text for every option.
+
 #### Basic Configuration
 
 ```yaml
-device_name_patterns: []           # Optional: filter by device name (e.g., ["living-*", "bedroom-*"])
-skip_device_name_patterns: []      # Optional: exclude by device name
-update_when_no_deployed_version: false
-update_when_version_matches: false
-log_level: "normal"                # New in 2.0.1: quiet|normal|verbose|debug
+mode: normal  # Dropdown: Normal / Repair / Upload Only
+device_name_patterns: []  # Optional: filter devices
+skip_device_name_patterns: []  # Optional: exclude devices
+log_level: normal  # Dropdown: quiet / normal / verbose / debug
+update_when_version_matches: false  # Force updates even when versions match
+dry_run: false  # Preview mode
 ```
 
-#### Advanced Options
+#### Configuration Options Explained
 
-```yaml
-# Testing & Control
-dry_run: false                    # Preview updates without executing
-yaml_name_patterns: []            # Filter by YAML filename
-skip_yaml_name_patterns: []       # Exclude by YAML filename
-
-# Housekeeping
-clear_log_on_start: false         # Clear log every start
-clear_log_on_version_change: true # Clear log when add-on updates
-clear_log_now: false              # One-time log clear trigger
-clear_progress_on_start: false    # Clear progress every start
-clear_progress_now: false         # One-time progress clear trigger
-
-# Error Handling
-stop_on_compilation_warning: false
-stop_on_compilation_error: true
-stop_on_upload_error: true
-```
-
-#### Configuration Reference
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `device_name_patterns` | list | [] | Include only devices matching these patterns (supports `*` wildcard) |
-| `skip_device_name_patterns` | list | [] | Exclude devices matching these patterns |
-| `yaml_name_patterns` | list | [] | Include only YAML files matching these patterns |
-| `skip_yaml_name_patterns` | list | [] | Exclude YAML files matching these patterns |
-| `update_when_no_deployed_version` | boolean | false | Update devices with no deployed version |
-| `update_when_version_matches` | boolean | false | Update even when versions match |
-| `log_level` | list | normal | Output verbosity: quiet\|normal\|verbose\|debug |
-| `dry_run` | boolean | false | Preview mode (no actual updates) |
-| `clear_log_on_start` | boolean | false | Clear log file on every start |
-| `clear_log_on_version_change` | boolean | true | Clear log when add-on version changes |
-| `clear_log_now` | boolean | false | One-time trigger to clear log |
-| `clear_progress_on_start` | boolean | false | Clear progress on every start |
-| `clear_progress_now` | boolean | false | One-time trigger to clear progress |
-| `stop_on_compilation_warning` | boolean | false | Stop if compilation produces warnings |
-| `stop_on_compilation_error` | boolean | true | Stop if compilation fails |
-| `stop_on_upload_error` | boolean | true | Stop if upload fails |
+| Option | Description |
+|--------|-------------|
+| **mode** | Operating mode: Normal (smart updates), Repair (rebuild metadata), Upload Only (install binaries) |
+| **device_name_patterns** | Include only devices matching these patterns (e.g., `ai*`, `bedroom-*`). Empty = all devices |
+| **skip_device_name_patterns** | Exclude devices matching these patterns (e.g., `test-*`, `offline-*`) |
+| **log_level** | Log verbosity: quiet (~50 lines), normal (~200 lines), verbose (~1000 lines), debug (everything) |
+| **update_when_no_deployed_version** | Update devices with no deployed version in metadata |
+| **update_when_version_matches** | Force update even when versions match (useful after repair mode) |
+| **dry_run** | Preview what would be updated without actually doing it |
+| **stop_on_compilation_error** | Stop entire process if any device fails to compile |
+| **stop_on_upload_error** | Stop entire process if any device fails to upload |
+| **clear_log_on_start** | Clear log file every time the add-on starts |
+| **clear_progress_on_start** | Clear progress tracking every start (forces restart from device #1) |
 
 ### Step 4 – Disable Protection Mode
 
@@ -186,49 +177,344 @@ stop_on_upload_error: true
 1. Go to the **Info** tab
 2. Find **"Protection mode"** toggle
 3. Turn it **OFF**
-4. Read the safety explanation above if you have concerns
 
-### Step 5 – Choose Your Log Level
-
-**New in 2.0.1:** Control how much output appears in the Supervisor Logs tab.
-
-| Level | Output | Best For |
-|-------|--------|----------|
-| **quiet** | Bare minimum (~50 lines for 377 devices) | Daily automated runs, large deployments |
-| **normal** | Standard operation (~200 lines) | General use, manual runs |
-| **verbose** | Detailed info (~1000 lines) | First-time setup, understanding behavior |
-| **debug** | Everything (thousands of lines) | Troubleshooting specific issues |
-
-**Important:** The persistent log file (`/config/esphome_smart_update.log`) always contains full logs regardless of this setting, so you can troubleshoot later without re-running.
-
-**Recommendation:** Start with `verbose` for your first run to understand what's happening, then switch to `normal` or `quiet` for regular use.
-
-### Step 6 – Start the Add-on
+### Step 5 – Start the Add-on
 
 1. Go to the **Info** tab
 2. Turn **Start on boot** OFF (recommended - run on-demand)
 3. Click **Start**
 
-Expected initial log lines (normal mode):
+Expected initial log lines:
 ```
 ======================================================================
-ESPHome Selective Updates v2.0.4
+ESPHome Selective Updates v2.0.12
 ======================================================================
 Log level: normal
+
+NORMAL MODE - Smart Updates
 
 ======================================================================
 Discovering Devices
 ======================================================================
-Discovered 377 ESPHome devices
+Discovered 389 ESPHome devices
 ```
 
 ---
 
-## 🛠️ Usage
+## 🛠️ Usage Workflows
 
-### Manual Button Script
+### Workflow 1: Initial Setup (Missing Metadata)
 
-Create a button in Home Assistant:
+If your devices have no metadata (after ESPHome cleanup or fresh install):
+
+**Step 1 - Repair Mode (~2-3 hours for 389 devices):**
+```yaml
+mode: repair
+log_level: normal
+```
+
+Result: All devices compiled, storage metadata populated, **no uploads**
+
+**Step 2 - Upload Only Mode (~3-4 hours for 389 devices):**
+```yaml
+mode: upload_only
+update_when_version_matches: true
+log_level: normal
+```
+
+Result: Pre-compiled binaries uploaded to all devices
+
+**Step 3 - Normal Mode (ongoing - minutes):**
+```yaml
+mode: normal
+log_level: quiet
+```
+
+Result: Only devices with version changes are updated
+
+---
+
+### Workflow 2: Regular Updates
+
+For everyday use after initial setup:
+
+```yaml
+mode: normal
+log_level: quiet
+```
+
+- Automatically detects devices that need updates
+- Only processes changed devices
+- Fast and efficient
+
+---
+
+### Workflow 3: Testing New Config
+
+Test changes on specific devices:
+
+```yaml
+mode: normal
+device_name_patterns: ["ai001", "ai002"]
+log_level: verbose
+dry_run: true
+```
+
+- Preview what would happen
+- Check for errors
+- Set `dry_run: false` when ready
+
+---
+
+### Workflow 4: Bulk Reinstall
+
+Force update all devices (e.g., after YAML changes):
+
+```yaml
+mode: normal
+update_when_version_matches: true
+stop_on_upload_error: false
+log_level: normal
+```
+
+- Updates all devices regardless of version
+- Continues even if some fail
+- Useful for applying configuration changes
+
+---
+
+## 📊 Monitoring
+
+### Logs
+
+**Live logs (Supervisor):**
+- Add-on **Log** tab → real-time output (respects log_level setting)
+
+**Persistent log (always full details):**
+- `/config/esphome_smart_update.log`
+
+**Progress file:**
+- `/config/esphome_smart_update_progress.json`
+
+### Example Output (Normal Mode)
+
+```
+======================================================================
+ESPHome Selective Updates v2.0.12
+======================================================================
+
+NORMAL MODE - Smart Updates
+
+======================================================================
+Discovering Devices
+======================================================================
+Discovered 389 ESPHome devices
+
+======================================================================
+Filtering Devices
+======================================================================
+Total devices found: 389
+Devices to process: 5
+Devices skipped: 384
+
+======================================================================
+Processing Devices
+======================================================================
+
+[1/5] Processing: ai001
+  → Compiling ai001.yaml...
+  → Uploading to device...
+  ✓ Successfully updated ai001
+
+[2/5] Processing: ai002
+  → Compiling ai002.yaml...
+  → Uploading to device...
+  ✓ Successfully updated ai002
+
+...
+
+======================================================================
+Summary
+======================================================================
+Total devices: 389
+Devices processed: 5
+Devices failed: 0
+Devices skipped: 384
+```
+
+### Example Output (Upload Only Mode)
+
+```
+======================================================================
+ESPHome Selective Updates v2.0.12
+======================================================================
+
+UPLOAD ONLY MODE - Installing Pre-Compiled Binaries
+Skipping compilation, using existing binaries
+
+======================================================================
+Processing Devices
+======================================================================
+
+[1/389] Uploading: ai001
+  → Uploading to device (using existing binary)...
+  ✓ Successfully uploaded ai001
+
+[2/389] Uploading: ai002
+  → Uploading to device (using existing binary)...
+  ✓ Successfully uploaded ai002
+
+...
+
+======================================================================
+Summary
+======================================================================
+Total devices: 389
+Devices processed: 389
+Devices failed: 0
+```
+
+---
+
+## 🧠 How It Works
+
+### Smart Update Logic
+
+```python
+for device in all_devices:
+    # Read from /config/esphome/.esphome/storage/[device].yaml.json
+    deployed_version = get_deployed_version(device)
+    
+    # Detected once at startup
+    current_version = get_esphome_version()
+    
+    if deployed_version == current_version:
+        skip(device)  # Already up-to-date
+    else:
+        update(device)  # Needs update
+```
+
+### Compilation Process
+
+1. Uses `docker exec` to run ESPHome CLI inside the official ESPHome container
+2. Compiles firmware: `esphome compile /config/esphome/<device>.yaml`
+3. Binary saved to `/config/esphome/.esphome/build/<device>/firmware.bin`
+4. Performs OTA upload via `esphome upload` command
+5. Updates storage metadata in `/config/esphome/.esphome/storage/<device>.yaml.json`
+
+### Resume Capability
+
+Progress tracked in `/config/esphome_smart_update_progress.json`:
+
+```json
+{
+  "done": ["ai001", "ai002", "ai003"],
+  "failed": ["as007"],
+  "skipped": []
+}
+```
+
+If interrupted, the next run:
+- Skips devices in "done" array
+- Retries devices in "failed" array
+- Re-evaluates devices in "skipped" array
+
+---
+
+## 🧰 Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| `Docker socket not found` | Protection Mode is ON | Turn OFF Protection Mode in add-on Info tab |
+| `ESPHome container not found` | Container name mismatch | Check `docker ps \| grep esphome` |
+| All devices skipped | Already updated or wrong mode | Check storage files have metadata, verify mode setting |
+| Devices skipped (no metadata) | Need repair mode | Run in repair mode first |
+| Compilation failed | YAML syntax error | Check device YAML in ESPHome dashboard |
+| Upload failed | Device offline or wrong password | Check device reachability and OTA password |
+| Logs too verbose | Log level too high | Set `log_level: normal` or `quiet` |
+| Can't troubleshoot | Log level too low | Check `/config/esphome_smart_update.log` |
+
+### Finding Your ESPHome Container
+
+```bash
+docker ps | grep esphome
+```
+
+Common names:
+- `addon_a0d7b954_esphome`
+- `addon_15ef4d2f_esphome`
+- `addon_5c53de3b_esphome`
+
+### Viewing Storage Files
+
+```bash
+ls /config/esphome/.esphome/storage/
+cat /config/esphome/.esphome/storage/ai001.yaml.json
+```
+
+Storage files contain:
+- `esphome_version` - Deployed version
+- `name` - Device name
+- `address` - Device IP
+- Build paths and metadata
+
+---
+
+## 🔧 Advanced Use Cases
+
+### Update Only Specific Rooms
+
+```yaml
+mode: normal
+device_name_patterns:
+  - "living-room-*"
+  - "bedroom-*"
+  - "kitchen-*"
+```
+
+### Exclude Offline Devices
+
+```yaml
+mode: normal
+skip_device_name_patterns:
+  - "garage-*"
+  - "basement-*"
+  - "test-*"
+```
+
+### Batch Updates by Floor
+
+```yaml
+mode: normal
+device_name_patterns:
+  - "floor-1-*"
+log_level: quiet
+```
+
+Run again with `floor-2-*`, `floor-3-*`, etc.
+
+### Test Mode Before Production
+
+```yaml
+mode: normal
+device_name_patterns: ["ai001", "ai002"]
+log_level: verbose
+dry_run: true
+```
+
+Review results, then:
+
+```yaml
+dry_run: false
+device_name_patterns: []  # All devices
+log_level: normal
+```
+
+---
+
+## 📡 Home Assistant Integration
+
+### Manual Button
 
 ```yaml
 type: button
@@ -254,9 +540,10 @@ action:
       addon: local_esphome_selective_updates
 ```
 
-### Input Boolean Trigger
+### Update with Notification
 
 ```yaml
+alias: ESPHome Update with Notification
 trigger:
   - platform: state
     entity_id: input_boolean.esphome_update_trigger
@@ -265,528 +552,33 @@ action:
   - service: hassio.addon_start
     data:
       addon: local_esphome_selective_updates
-  - delay: 5
+  - wait_template: "{{ is_state('binary_sensor.esphome_selective_updates_running', 'off') }}"
+    timeout: "02:00:00"
+  - service: notify.mobile_app
+    data:
+      title: "ESPHome Updates"
+      message: "Device updates completed. Check logs for details."
   - service: input_boolean.turn_off
     target:
       entity_id: input_boolean.esphome_update_trigger
 ```
 
-### Dry Run First (Recommended)
-
-Before your first real run:
-
-1. Set `dry_run: true` in options
-2. Set `log_level: verbose` to see details
-3. Start the add-on
-4. Review logs to see what would be updated
-5. Set `dry_run: false` and `log_level: normal` when satisfied
-6. Run for real
-
 ---
 
-## 📊 Monitoring
-
-### Logs
-
-**Live logs (Supervisor):**
-- Add-on **Log** tab → real-time output (respects log_level setting)
-
-**Persistent log (always full details):**
-- `/config/esphome_smart_update.log`
-
-**Progress file:**
-- `/config/esphome_update_progress.json`
-
-### Example Output (Normal Level)
-
-```
-======================================================================
-ESPHome Selective Updates v2.0.4
-======================================================================
-Log level: normal
-
-======================================================================
-Discovering Devices
-======================================================================
-Discovered 377 ESPHome devices
-
-======================================================================
-Filtering Devices
-======================================================================
-Total devices found: 377
-Devices to process: 5
-Devices skipped: 372
-
-======================================================================
-Processing Devices
-======================================================================
-
-[1/5] Processing: ai001
-  → Compiling ai001.yaml...
-  → Uploading to device...
-  ✓ Successfully updated ai001
-
-[2/5] Processing: ai002
-  → Compiling ai002.yaml...
-  → Uploading to device...
-  ✓ Successfully updated ai002
-
-[3/5] Processing: as007
-  → Compiling as007.yaml...
-  ✗ Upload failed: Connection refused (device offline or wrong IP?)
-
-[4/5] Processing: br005
-  → Compiling br005.yaml...
-  → Uploading to device...
-  ✓ Successfully updated br005
-
-[5/5] Processing: lr012
-  → Compiling lr012.yaml...
-  → Uploading to device...
-  ✓ Successfully updated lr012
-
-======================================================================
-Summary
-======================================================================
-Total devices: 377
-Devices processed: 4
-Devices failed: 1
-Devices skipped: 372
-
-Failed devices:
-  - as007
-
-Log file: /config/esphome_smart_update.log
-Progress file: /config/esphome_update_progress.json
-```
-
-### Example Output (Quiet Level)
-
-```
-======================================================================
-ESPHome Selective Updates v2.0.4
-======================================================================
-
-======================================================================
-Discovering Devices
-======================================================================
-
-======================================================================
-Filtering Devices
-======================================================================
-
-======================================================================
-Processing Devices
-======================================================================
-
-======================================================================
-Summary
-======================================================================
-Total devices: 377
-Devices processed: 4
-Devices failed: 1
-Devices skipped: 372
-
-Failed devices:
-  - as007
-
-Log file: /config/esphome_smart_update.log
-Progress file: /config/esphome_update_progress.json
-```
-
-### Clearing Massive Supervisor Logs
-
-If you already have huge logs from previous runs:
-
-```bash
-# SSH into Home Assistant
-ha addons stop local_esphome_selective_updates
-ha supervisor logs clear
-# or: journalctl --vacuum-time=1s
-ha addons start local_esphome_selective_updates
-```
-
----
-
-## 🧠 How It Works
-
-### Compilation Process
-
-1. Uses `docker exec` to run ESPHome CLI inside the official ESPHome add-on
-2. Compiles firmware: `esphome compile /config/esphome/<device>.yaml`
-3. Locates compiled `.bin` file in container
-4. Copies binary to `/config/esphome/builds/` on host
-5. Performs OTA upload via `esphome upload` command
-
-### Smart Update Logic
-
-```python
-for device in all_devices:
-    deployed_version = get_deployed_version(device)  # From .storage file
-    current_version  = get_current_version(device)   # From esphome version command
-    
-    if deployed_version == current_version:
-        skip(device)  # Already up-to-date
-    else:
-        update(device)  # Needs update
-```
-
-### Resume Capability
-
-Progress is tracked in `/config/esphome_update_progress.json`:
-
-```json
-{
-  "done": ["ai001", "ai002", "ai003"],
-  "failed": ["as007"],
-  "skipped": []
-}
-```
-
-If the add-on is stopped or crashes, the next run will:
-- Skip devices in "done" array
-- Retry devices in "failed" array (in case they're back online)
-- Re-evaluate devices in "skipped" array
-
-### Log Level System
-
-**New in 2.0.1:** All logging goes through a level filter.
-
-```python
-log_quiet()   # Always shown: headers, errors, summary
-log_normal()  # Standard: device processing messages
-log_verbose() # Detailed: version info, skip reasons
-log_debug()   # Everything: command outputs, compilation logs
-```
-
-- **Supervisor logs** respect the configured level
-- **Persistent log file** always gets ALL logs for troubleshooting
-
----
-
-## 🧰 Troubleshooting
-
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| `FATAL: Docker socket not found` | Protection Mode is ON | Turn OFF Protection Mode in add-on Info tab |
-| `ESPHome container not found` | Container name incorrect | Check actual name with `docker ps`, update config |
-| `Cannot communicate with Docker` | Protection Mode or socket issue | Ensure Protection Mode is OFF, restart add-on |
-| Devices skipped | Already updated, offline, or filtered | Check logs for skip reasons (use `log_level: verbose`) |
-| Compilation failed | YAML syntax error or missing dependencies | Check device YAML in ESPHome dashboard |
-| OTA upload failed | Device offline, wrong password, or network issue | Check device reachability and OTA password |
-| Logs too verbose | Log level set too high | Set `log_level: normal` or `log_level: quiet` |
-| Can't troubleshoot | Log level too low | Check `/config/esphome_smart_update.log` for full details |
-
-### Common ESPHome Container Names
-
-If `addon_5c53de3b_esphome` doesn't work, try:
-- `addon_15ef4d2f_esphome`
-- `addon_a0d7b954_esphome`
-
-To find your actual container name:
-```bash
-docker ps | grep esphome
-```
-
-Or check **Settings → System → Logs → Supervisor** for "Starting addon_XXXXXXXX_esphome"
-
-### Viewing Progress File
-
-```bash
-cat /config/esphome_update_progress.json
-```
-
-To manually reset progress:
-```yaml
-clear_progress_now: true
-```
-(Remember to set it back to `false` after)
-
-### Viewing Full Logs
-
-Even with `log_level: quiet`, full logs are always available:
-
-```bash
-tail -f /config/esphome_smart_update.log
-```
-
-Or download via **File Editor** add-on or Samba share.
-
-
----
-
-## 🔧 Dashboard Metadata Repair
-
-### When Do You Need This?
-
-If you see this in your logs:
-
-```
-✗ device-name - no deployed version (update_when_no_deployed_version=false)
-```
-
-And **all or most devices** are being skipped, your ESPHome dashboard.json file is missing metadata.
-
-### Common Causes
-
-1. **ESPHome cleanup** - Deleted old configuration files
-2. **Fresh installation** - New ESPHome setup without version history
-3. **Dashboard corruption** - dashboard.json was deleted or corrupted
-4. **Storage migration** - Moved from old ESPHome storage format
-
-### How Repair Mode Works
-
-Repair mode:
-- ✅ Compiles each device once to generate metadata
-- ✅ Populates `deployed_version` and `current_version` in dashboard.json
-- ✅ **NO OTA uploads** - compile-only operation
-- ✅ Safe to run - doesn't modify devices
-- ✅ After completion, normal smart update logic works
-
-### Step-by-Step Repair Process
-
-#### 1. Enable Repair Mode
-
-Set these options in your add-on configuration:
-
-```yaml
-repair_dashboard_metadata: true
-repair_skip_existing_metadata: true
-log_level: normal  # or verbose for more details
-```
-
-**Configuration Options:**
-
-| Option | Description | Recommended |
-|--------|-------------|-------------|
-| `repair_dashboard_metadata` | Enable repair mode | `true` (one-time) |
-| `repair_skip_existing_metadata` | Skip devices with existing metadata | `true` (faster) |
-
-#### 2. Start the Add-on
-
-Click **Start** in the add-on Info tab.
-
-Expected output:
-
-```
-======================================================================
-ESPHome Selective Updates v2.0.6
-======================================================================
-
-======================================================================
-REPAIR MODE ENABLED
-======================================================================
-
-======================================================================
-Dashboard Metadata Repair Mode
-======================================================================
-This mode compiles devices to populate dashboard.json metadata
-NO OTA uploads will be performed
-
-Will skip devices that already have metadata
-
-[1/389] Checking: ai001
-  → Compiling ai001.yaml to generate metadata...
-  ✓ Metadata generated: deployed=2025.11.0, current=2025.11.0
-
-[2/389] Checking: ai002
-  → Compiling ai002.yaml to generate metadata...
-  ✓ Metadata generated: deployed=2025.11.0, current=2025.11.0
-
-...
-
-======================================================================
-Repair Summary
-======================================================================
-Total devices: 389
-Metadata repaired: 389
-Already had metadata: 0
-Failed: 0
-
-======================================================================
-Repair mode complete.
-======================================================================
-
-Next steps:
-  1. Set 'repair_dashboard_metadata: false' in configuration
-  2. Run add-on normally for smart updates
-```
-
-#### 3. Wait for Completion
-
-**Time estimates:**
-- **100 devices:** ~30-45 minutes
-- **200 devices:** ~1-1.5 hours
-- **389 devices:** ~2-3 hours
-
-This is compile-only (no uploads), so it's faster than full updates.
-
-#### 4. Disable Repair Mode
-
-After completion, set:
-
-```yaml
-repair_dashboard_metadata: false
-```
-
-#### 5. Run Normally
-
-Start the add-on again. It will now:
-- Read metadata from dashboard.json
-- Use smart update logic
-- Only update devices that actually need updates
-
-### Troubleshooting Repair Mode
-
-| Issue | Solution |
-|-------|----------|
-| Some devices failed to compile | Normal - check YAML syntax for those devices in ESPHome Dashboard |
-| Repair taking too long | Normal for large deployments - let it complete |
-| Want to stop repair | Stop the add-on - progress is saved, can resume |
-| Need to re-repair specific devices | Set `repair_skip_existing_metadata: false` to recompile everything |
-
-### After Repair
-
-Once metadata is repaired:
-1. Normal smart update logic works
-2. Future runs only update devices with version changes
-3. No need to run repair mode again (unless you clean ESPHome again)
-
-### Example: Repairing 389 Devices
-
-**Before repair:**
-```
-Total devices: 389
-Devices to process: 0
-Devices skipped: 389
-
-Skip reasons:
-  - no deployed version: 389
-```
-
-**During repair:**
-```
-[1/389] Checking: ai001
-  ✓ Metadata generated
-
-[2/389] Checking: ai002
-  ✓ Metadata generated
-
-...continuing through all 389 devices...
-```
-
-**After repair (next normal run):**
-```
-Total devices: 389
-Devices to process: 5  ← Only devices that actually need updates
-Devices skipped: 384
-
-Skip reasons:
-  - versions match: 384
-```
-
-### Advanced Repair Options
-
-#### Repair Only Specific Devices
-
-Combine repair mode with device filtering:
-
-```yaml
-repair_dashboard_metadata: true
-repair_skip_existing_metadata: true
-device_name_patterns:
-  - "ai*"      # Only AI devices
-  - "sp0*"     # Only SP0xx devices
-```
-
-#### Force Recompile Everything
-
-If you want to rebuild metadata for ALL devices (even those with existing metadata):
-
-```yaml
-repair_dashboard_metadata: true
-repair_skip_existing_metadata: false  # Recompile everything
-```
-
-⚠️ **Warning:** This recompiles ALL devices, taking significantly longer.
-
-#### Resume Interrupted Repair
-
-If repair is interrupted:
-1. Simply start the add-on again with repair mode enabled
-2. It will skip devices that already have metadata
-3. Continues from where it left off
-
----
-
-## 🔧 Advanced Use Cases
-
-### Update Only Specific Devices
-
-```yaml
-device_name_patterns:
-  - "living-room-*"
-  - "bedroom-*"
-  - "kitchen-sensor"
-```
-
-### Exclude Problematic Devices
-
-```yaml
-skip_device_name_patterns:
-  - "garage-*"        # Offline devices
-  - "test-*"          # Test devices
-```
-
-### Batch Updates with Minimal Logs
-
-```yaml
-log_level: "quiet"
-device_name_patterns:
-  - "floor-1-*"
-```
-
-Run again with `floor-2-*`, `floor-3-*`, etc.
-
-### Verbose Testing Then Quiet Production
-
-**First run:**
-```yaml
-dry_run: true
-log_level: verbose
-```
-
-**After verification:**
-```yaml
-dry_run: false
-log_level: quiet
-```
-
-### Nightly Updates with Notification
-
-```yaml
-alias: ESPHome Nightly Update with Notification
-trigger:
-  - platform: time
-    at: "02:00:00"
-action:
-  - service: hassio.addon_start
-    data:
-      addon: local_esphome_selective_updates
-  - delay: 300  # Wait 5 minutes for completion
-  - service: persistent_notification.create
-    data:
-      title: "ESPHome Updates"
-      message: "Nightly device updates completed. Check /config/esphome_smart_update.log for details."
-```
-
----
-
-## 📡 Network Requirements
-
-- Access to ESPHome dashboard container (local Docker)
-- Access to device IPs for HTTP OTA (ports 3232, 8266, or 6053)
-- Supervisor Docker socket (`/run/docker.sock`)
+## 📈 Performance
+
+| Scenario | Time | Notes |
+|----------|------|-------|
+| **Normal mode (5 devices need update)** | ~10-15 min | Compile + upload only changed devices |
+| **Normal mode (0 devices need update)** | ~30 sec | Discovery only, all skipped |
+| **Repair mode (389 devices)** | ~2-3 hours | Compile-only, populate metadata |
+| **Upload Only (389 devices)** | ~3-4 hours | OTA upload pre-compiled binaries |
+| **Full workflow (Repair + Upload)** | ~5-7 hours | One-time setup for 389 devices |
+
+**After initial setup:**
+- Future updates: minutes instead of hours
+- Only processes devices that actually changed
+- 600x faster device discovery (1 sec vs 10-15 min)
 
 ---
 
@@ -798,20 +590,18 @@ I've submitted a feature request to make this functionality native to ESPHome Da
 
 If you'd like to see this become an official ESPHome feature, please 👍 the discussion and share your use case!
 
-Until then, this add-on provides the functionality you need today. If ESPHome adds a compile API, I'll refactor this add-on to use it and make Protection Mode unnecessary.
-
 ---
 
-## 🧾 Changelog Summary
+## 📝 Changelog Summary
 
 | Version | Key Changes |
 |---------|-------------|
-| **2.0.4** | Fixed ESPHome container auto-detection, added config directory mount, resolved "not running" false positives |
-| **2.0.1** | Added configurable log levels (quiet/normal/verbose/debug), fixed log clearing, drastically reduced Supervisor log output |
-| **2.0.0** | Major rewrite: Added dry run, offline detection, batch control, better safety checks, clearer Protection Mode messaging |
-| **1.2.x** | Switched to Docker exec mode, added graceful stop |
-| **1.1.x** | Added resume capability with progress tracking |
-| **1.0.0** | Initial release with smart version-based updates |
+| **2.0.12** | Mode selector dropdown, Upload Only mode, storage file path fixes, help text for all options |
+| **2.0.11** | Storage file detection, metadata writing improvements |
+| **2.0.6** | Repair mode for metadata rebuilding |
+| **2.0.4** | ESPHome container auto-detection |
+| **2.0.1** | Configurable log levels, reduced Supervisor log output |
+| **2.0.0** | Major rewrite: dry run, safety checks, Protection Mode clarity |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
@@ -822,31 +612,20 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 ### Self-Help
 
 1. Check the add-on **Log** tab for errors
-2. Inspect `/config/esphome_smart_update.log` for detailed history (always has full logs)
-3. Try running with `log_level: verbose` or `log_level: debug` for more details
-4. Verify ESPHome container name is correct (`docker ps | grep esphome`)
+2. Inspect `/config/esphome_smart_update.log` for full details
+3. Run with `log_level: verbose` or `log_level: debug` for diagnostics
+4. Verify ESPHome container is running: `docker ps | grep esphome`
 5. Confirm Protection Mode is OFF
-6. Test device reachability with manual ping
+6. Check storage files exist: `ls /config/esphome/.esphome/storage/`
 
 ### Getting Help
 
-If you encounter issues:
-
-1. **Enable verbose/debug mode** and check logs
-2. **Check ESPHome add-on is running** (`docker ps | grep esphome`)
-3. **Open an issue** on GitHub with:
-   - Add-on version
-   - ESPHome version
-   - Log level used
-   - Relevant log excerpts from `/config/esphome_smart_update.log`
-   - Configuration (redact passwords)
-
-### Feature Requests
-
-Have an idea? Open an issue with:
-- Clear description of the problem
-- Proposed solution
-- Your use case
+Open an issue on GitHub with:
+- Add-on version (v2.0.12)
+- ESPHome version
+- Mode being used (Normal/Repair/Upload Only)
+- Log excerpts from `/config/esphome_smart_update.log`
+- Configuration (redact sensitive info)
 
 ---
 
@@ -860,7 +639,7 @@ MIT License - See [LICENSE](LICENSE) file
 
 **Chris Judd** - Large-scale ESPHome management made reliable, repeatable, and readable.
 
-Built out of necessity to manage 375+ ESPHome devices efficiently without drowning in logs.
+Built to manage 389 ESPHome devices efficiently without drowning in logs.
 
 ---
 
@@ -882,6 +661,12 @@ Built out of necessity to manage 375+ ESPHome devices efficiently without drowni
 
 ---
 
-**Remember:** This add-on is a power-user tool that fixes real limitations in ESPHome. Use it responsibly, understand the Protection Mode requirement, and help advocate for native ESPHome support for this functionality.
+**Quick Start:**
 
-**Tip:** Start with `log_level: verbose` to understand how it works, then switch to `normal` or `quiet` for daily use. Full logs are always available in `/config/esphome_smart_update.log` when you need them.
+1. Install add-on
+2. Turn OFF Protection Mode
+3. Run **Repair mode** once (if metadata is missing)
+4. Run **Upload Only mode** to install binaries
+5. Use **Normal mode** for future updates
+
+**That's it!** The add-on handles everything else automatically.
