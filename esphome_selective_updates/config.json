@@ -11,9 +11,6 @@
   "hassio_api": true,
   "host_network": true,
   "map": ["config:rw"],
-  "panel_icon": "mdi:chip",
-  "panel_title": "Configuration Guide",
-  "panel_admin": false,
   "options": {
     "mode": "normal",
     "device_name_patterns": [],
@@ -28,10 +25,10 @@
     "clear_progress_on_start": false
   },
   "schema": {
-    "mode": "list(normal|repair|upload_only)?",
+    "mode": "list(normal|repair|upload_only)",
     "device_name_patterns": ["str?"],
     "skip_device_name_patterns": ["str?"],
-    "log_level": "list(quiet|normal|verbose|debug)?",
+    "log_level": "list(quiet|normal|verbose|debug)",
     "update_when_no_deployed_version": "bool",
     "update_when_version_matches": "bool",
     "dry_run": "bool",
