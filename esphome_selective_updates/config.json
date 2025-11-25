@@ -1,6 +1,6 @@
 {
   "name": "ESPHome Selective Updates",
-  "version": "2.0.12a",
+  "version": "2.0.12",
   "slug": "esphome_selective_updates",
   "description": "Intelligently update ESPHome devices based on version changes",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
@@ -11,6 +11,9 @@
   "hassio_api": true,
   "host_network": true,
   "map": ["config:rw"],
+  "panel_icon": "mdi:chip",
+  "panel_title": "Configuration Guide",
+  "panel_admin": false,
   "options": {
     "mode": "normal",
     "device_name_patterns": [],
@@ -25,62 +28,16 @@
     "clear_progress_on_start": false
   },
   "schema": {
-    "mode": {
-      "type": "list",
-      "options": [
-        {"value": "normal", "label": "Normal - Smart updates (compile + upload only changed devices)"},
-        {"value": "repair", "label": "Repair - Rebuild metadata (compile only, no upload)"},
-        {"value": "upload_only", "label": "Upload Only - Use existing binaries (skip compile, just upload)"}
-      ],
-      "description": "Operating mode: Normal for regular updates, Repair to fix metadata, Upload Only to install pre-compiled binaries"
-    },
-    "device_name_patterns": {
-      "type": "list",
-      "optional": true,
-      "description": "Include only devices matching these patterns (e.g., 'ai*', 'bedroom-*'). Leave empty for all devices."
-    },
-    "skip_device_name_patterns": {
-      "type": "list",
-      "optional": true,
-      "description": "Exclude devices matching these patterns (e.g., 'test-*', 'offline-*'). Applied after include patterns."
-    },
-    "log_level": {
-      "type": "list",
-      "options": [
-        {"value": "quiet", "label": "Quiet - Minimal output (~50 lines for 389 devices)"},
-        {"value": "normal", "label": "Normal - Standard operation (~200 lines)"},
-        {"value": "verbose", "label": "Verbose - Detailed info (~1000 lines)"},
-        {"value": "debug", "label": "Debug - Everything (use for troubleshooting)"}
-      ],
-      "description": "Log verbosity in Supervisor logs. Full logs always saved to /config/esphome_smart_update.log"
-    },
-    "update_when_no_deployed_version": {
-      "type": "bool",
-      "description": "Update devices with no deployed version in metadata (usually new devices)"
-    },
-    "update_when_version_matches": {
-      "type": "bool",
-      "description": "Force update even when versions match (useful after repair mode or for bulk reinstalls)"
-    },
-    "dry_run": {
-      "type": "bool",
-      "description": "Preview what would be updated without actually doing it"
-    },
-    "stop_on_compilation_error": {
-      "type": "bool",
-      "description": "Stop entire process if any device fails to compile"
-    },
-    "stop_on_upload_error": {
-      "type": "bool",
-      "description": "Stop entire process if any device fails to upload"
-    },
-    "clear_log_on_start": {
-      "type": "bool",
-      "description": "Clear the log file every time the add-on starts"
-    },
-    "clear_progress_on_start": {
-      "type": "bool",
-      "description": "Clear progress tracking every time the add-on starts (forces restart from device #1)"
-    }
+    "mode": "list(normal|repair|upload_only)?",
+    "device_name_patterns": ["str?"],
+    "skip_device_name_patterns": ["str?"],
+    "log_level": "list(quiet|normal|verbose|debug)?",
+    "update_when_no_deployed_version": "bool",
+    "update_when_version_matches": "bool",
+    "dry_run": "bool",
+    "stop_on_compilation_error": "bool",
+    "stop_on_upload_error": "bool",
+    "clear_log_on_start": "bool",
+    "clear_progress_on_start": "bool"
   }
 }
